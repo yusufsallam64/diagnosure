@@ -1,188 +1,249 @@
 import asyncio
 import json
 import logging
+import numpy as np
 import torch
 from pathlib import Path
-import time
+from typing import List, Dict, Any, Optional
 from sentence_transformers import SentenceTransformer
-from lightrag import LightRAG, QueryParam
-from lightrag.llm.openai import gpt_4o_mini_complete
-from lightrag.utils import EmbeddingFunc
-from chromadb_manager import start_chroma_server
-from dotenv import load_dotenv
-from collections import defaultdict
-import os
-os.environ["TOKENIZERS_PARALLELISM"] = "false"  
-
-load_dotenv()
+import chromadb
+from chromadb.config import Settings
+from chromadb.utils import embedding_functions
+from tqdm import tqdm
+import hashlib
+import time
 
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(message)s',
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler('logs/rag_build.log')
+        logging.FileHandler('logs/rag.log')
     ]
 )
 logger = logging.getLogger(__name__)
 
-class AsyncSentenceTransformer:
-    """Async wrapper for SentenceTransformer"""
-    def __init__(self, model_name: str, device: str = None):
-        self.model = SentenceTransformer(model_name)
-        if device:
-            self.model = self.model.to(device)
-        self.model.max_seq_length = 512
+class DocumentStore:
+    """
+    A simple document storage and embedding system with ChromaDB backend.
+    Focused on embedding and storing documents with metadata.
+    """
+    def __init__(
+        self,
+        collection_name: str = "medical_documents",
+        embedding_model_name: str = "BAAI/bge-large-en-v1.5",
+        persist_directory: str = "./chroma_db"
+    ):
+        self.collection_name = collection_name
+        self.persist_directory = persist_directory
         
-    async def encode_batch(self, texts: list[str]) -> list:
-        """Async encoding of text batches"""
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self.model.encode, texts)
-
-def load_chunks(file_path: str) -> tuple[dict, list]:
-    """Load chunks and metadata from JSON file"""
-    with open(file_path, 'r', encoding='utf-8') as f:
-        data = json.load(f)
-        return data.get('document_info', {}), data.get('chunks', [])
-
-def format_chunk(chunk: dict) -> str:
-    return f"""### MEDICAL DOCUMENT CHUNK
-        CONTENT: {chunk['content']}
-        SECTION: {chunk['section_type']}
-        PAGE: {chunk['page_num']}
-        PATIENT_ID: {chunk.get('metadata', {}).get('patient_id', 'N/A')}
-        DOC_DATE: {chunk.get('metadata', {}).get('date', 'N/A')}
-        KEY_TERMS: {", ".join(chunk.get('metadata', {}).get('keywords', []))}"""
-
-
-async def create_embedding_function(device: str) -> EmbeddingFunc:
-    """Create embedding function using BAAI model"""
-    logger.info(f"Initializing BAAI/bge-large-en-v1.5 model on {device}")
-    model = AsyncSentenceTransformer("BAAI/bge-large-en-v1.5", device)
-    
-    # Validate with test input
-    test_embedding = await model.encode_batch(["test"])
-    logger.info("Model initialization successful")
-    
-    return EmbeddingFunc(
-        embedding_dim=test_embedding.shape[1],
-        max_token_size=8192,
-        func=model.encode_batch
-    )
-
-async def initialize_rag(working_dir: str, embedding_func: EmbeddingFunc) -> LightRAG:
-    """Initialize RAG with ChromaDB backend and batch processing configuration"""
-    logger.info("Initializing RAG system with ChromaDB backend")
-    return LightRAG(
-        working_dir=working_dir,
-        llm_model_func=gpt_4o_mini_complete,
-        embedding_func=embedding_func,
-        vector_storage="ChromaVectorDBStorage",
-        embedding_batch_num=64,
-        addon_params={
-            "insert_batch_size": 32
-        },
-        vector_db_storage_cls_kwargs={
-            "host": "localhost",
-            "port": 8000,
-            "collection_settings": {
-                "hnsw:space": "cosine",
-                "hnsw:construction_ef": 64,
-                "hnsw:search_ef": 32,
-                "hnsw:M": 8,
-            },
-            "graph_validation": {  # Add this
-                "require_node_metadata": True,
-                "allowed_relation_types": ["medical", "symptom"]
-            }
-        }
-    )
-
-async def process_chunks(chunks: list[dict], rag: LightRAG):
-    """Process chunks using LightRAG's built-in batch processing"""
-    try:
-        # Group chunks by section type
-        sections = defaultdict(list)
-        for chunk in chunks:
-            sections[chunk['section_type']].append(chunk)
+        # Initialize embedding model with device detection
+        logger.info(f"Initializing embedding model: {embedding_model_name}")
+        self.device = 'mps' if torch.backends.mps.is_available() else 'cuda' if torch.cuda.is_available() else 'cpu'
+        logger.info(f"Using device: {self.device}")
         
-        total_sections = len(sections)
+        self.embedding_model = SentenceTransformer(embedding_model_name)
+        self.embedding_model.to(self.device)
+        self.embedding_model.max_seq_length = 512
+        
+        # Initialize ChromaDB
+        logger.info("Initializing ChromaDB")
+        self.chroma_client = chromadb.PersistentClient(
+            path=persist_directory,
+            settings=Settings(
+                anonymized_telemetry=False,
+                allow_reset=True
+            )
+        )
+        
+        # Create or get collection
+        self.collection = self.chroma_client.get_or_create_collection(
+            name=collection_name,
+            embedding_function=embedding_functions.SentenceTransformerEmbeddingFunction(
+                model_name=embedding_model_name,
+                device=self.device
+            ),
+            metadata={"hnsw:space": "cosine"}
+        )
+        
+        logger.info(f"Collection '{collection_name}' contains {self.collection.count()} documents")
+
+    def generate_document_id(self, content: str, metadata: dict) -> str:
+        """Generate a unique ID for a document based on its content and metadata"""
+        # Combine content and relevant metadata into a string
+        id_string = f"{content}{metadata.get('section_type', '')}{metadata.get('page_num', '')}"
+        # Generate a hash
+        return hashlib.md5(id_string.encode()).hexdigest()
+
+    async def add_documents(self, chunks: List[Dict[str, Any]], batch_size: int = 32):
+        """
+        Add document chunks to the vector store
+        
+        Args:
+            chunks: List of document chunks with content and metadata
+            batch_size: Number of chunks to process at once
+        """
         total_chunks = len(chunks)
-        processed_chunks = 0
+        logger.info(f"Adding {total_chunks} chunks to vector store")
         
-        # Process each section's chunks
-        for section_idx, (section_type, section_chunks) in enumerate(sections.items(), 1):
-            # Sort chunks by page number and chunk_id
-            section_chunks.sort(key=lambda x: (x['page_num'], x['chunk_id']))
+        # Create batches with progress bar
+        batches = list(range(0, total_chunks, batch_size))
+        pbar = tqdm(batches, desc="Batches")
+        
+        existing_ids = set(self.collection.get()["ids"]) if self.collection.count() > 0 else set()
+        added_count = 0
+        
+        for i in pbar:
+            batch = chunks[i:i + batch_size]
             
-            logger.info(f"\nProcessing section {section_idx}/{total_sections}")
-            logger.info(f"Section Type: {section_type}")
+            # Prepare batch data
+            texts = []
+            metadatas = []
+            ids = []
             
-            # Process each chunk in the section
-            for chunk in section_chunks:
-                processed_chunks += 1
-                formatted_chunk = format_chunk(chunk)
-                await rag.ainsert([formatted_chunk])
+            for chunk in batch:
+                # Format chunk content
+                formatted_content = f"""
+                Content: {chunk['content']}
+                Section: {chunk['section_type']}
+                Page: {chunk['page_num']}
+                """.strip()
                 
-                # Log progress
-                logger.info(
-                    f"Progress: {processed_chunks}/{total_chunks} total chunks -- "
-                    f"Section {section_idx}/{total_sections}, "
-                    f"Page {chunk['page_num']}, "
-                    f"Chunk ID: {chunk['chunk_id']}"
-                )
+                # Generate unique ID for the document
+                doc_id = self.generate_document_id(formatted_content, chunk)
                 
-                # Small delay every 10 chunks to prevent overwhelming the system
-                if processed_chunks % 10 == 0:
-                    await asyncio.sleep(0.1)
+                # Skip if document already exists
+                if doc_id in existing_ids:
+                    continue
+                
+                texts.append(formatted_content)
+                metadatas.append({
+                    'section_type': chunk['section_type'],
+                    'page_num': chunk['page_num'],
+                    'chunk_id': chunk['chunk_id'],
+                    'timestamp': int(time.time()),
+                    **chunk.get('metadata', {})
+                })
+                ids.append(doc_id)
+                existing_ids.add(doc_id)
+            
+            # Add to ChromaDB if we have new documents
+            if texts:
+                try:
+                    self.collection.add(
+                        documents=texts,
+                        metadatas=metadatas,
+                        ids=ids
+                    )
+                    added_count += len(texts)
+                    logger.info(f"Added {len(texts)} new chunks")
+                except Exception as e:
+                    logger.error(f"Error adding batch to ChromaDB: {str(e)}")
+                    raise
         
-        logger.info(f"\nSuccessfully processed all {total_chunks} chunks from {total_sections} sections")
+        logger.info(f"Successfully added {added_count} new chunks. Collection now contains {self.collection.count()} documents")
+
+    async def get_similar_chunks(
+        self,
+        query_text: str,
+        top_k: int = 5,
+        min_similarity: float = 0.5
+    ) -> List[Dict[str, Any]]:
+        """
+        Retrieve similar chunks from the store
         
-    except Exception as e:
-        logger.error(f"Error processing chunks: {str(e)}")
-        raise
+        Args:
+            query_text: The query string
+            top_k: Number of similar chunks to retrieve
+            min_similarity: Minimum similarity threshold
+            
+        Returns:
+            List of similar chunks with their metadata and similarity scores
+        """
+        try:
+            # Get total document count
+            doc_count = self.collection.count()
+            if doc_count == 0:
+                logger.warning("No documents in collection")
+                return []
+                
+            # Adjust top_k if necessary
+            actual_top_k = min(top_k, doc_count)
+            if actual_top_k < top_k:
+                logger.info(f"Adjusted top_k from {top_k} to {actual_top_k} based on available documents")
+            
+            results = self.collection.query(
+                query_texts=[query_text],
+                n_results=actual_top_k,
+                include=['documents', 'metadatas', 'distances']
+            )
+            
+            # Filter by similarity threshold
+            filtered_chunks = []
+            for doc, meta, distance in zip(
+                results['documents'][0],
+                results['metadatas'][0],
+                results['distances'][0]
+            ):
+                similarity = 1 - (distance / 2)  # Convert distance to similarity
+                if similarity >= min_similarity:
+                    filtered_chunks.append({
+                        'content': doc,
+                        'metadata': meta,
+                        'similarity': similarity
+                    })
+            
+            logger.info(f"Found {len(filtered_chunks)} chunks above similarity threshold {min_similarity}")
+            return filtered_chunks
+            
+        except Exception as e:
+            logger.error(f"Error during similarity search: {str(e)}")
+            raise
 
 async def main():
-    # Setup paths relative to current directory
-    current_dir = Path(__file__).parent
-    working_dir = current_dir / "lightrag_cache"
-    articles_path = current_dir.parent / "processed" / "personal-injury-sample_processed.json"
-    
-    # Setup working directory
+    # Setup paths
+    working_dir = Path("./rag_working_dir")
     working_dir.mkdir(parents=True, exist_ok=True)
     
-    try:
-        # Start ChromaDB
-        process = start_chroma_server()
-        
-        # Wait for ChromaDB to be ready
-        time.sleep(2)
-        
-        # Setup device
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        logger.info(f"Using device: {device}")
-        
-        # Load chunks and metadata
-        logger.info(f"Loading data from {articles_path}...")
-        doc_info, chunks = load_chunks(str(articles_path))
-        logger.info(f"Loaded {len(chunks)} chunks")
-        logger.info(f"Document processed at: {doc_info.get('processed_at')}")
-        logger.info(f"Total sections: {doc_info.get('total_sections')}")
-        logger.info(f"Total chunks: {doc_info.get('total_chunks')}")
-        
-        # Initialize embedding function and RAG
-        embedding_func = await create_embedding_function(device)
-        rag = await initialize_rag(str(working_dir), embedding_func)
-        
-        # Process chunks
-        logger.info("Starting chunk processing...")
-        await process_chunks(chunks, rag)
-        logger.info("Successfully completed all chunk processing")
-            
-    except Exception as e:
-        logger.error(f"Error: {str(e)}")
-        raise
+    # Initialize document store
+    doc_store = DocumentStore(persist_directory=str(working_dir / "chroma_db"))
+    
+    # Example chunks - you should replace this with your actual data loading
+    chunks = [
+        {
+            "content": "Patient reports severe headache and dizziness",
+            "section_type": "symptoms",
+            "page_num": 1,
+            "chunk_id": "sym_001",
+            "metadata": {"date": "2024-01-20"}
+        },
+        {
+            "content": "Lower back pain reported, patient describes it as chronic",
+            "section_type": "symptoms",
+            "page_num": 1,
+            "chunk_id": "sym_002",
+            "metadata": {"date": "2024-01-20"}
+        },
+        {
+            "content": "Previous history of lumbar strain noted",
+            "section_type": "medical_history",
+            "page_num": 2,
+            "chunk_id": "hist_001",
+            "metadata": {"date": "2024-01-20"}
+        }
+    ]
+    
+    # Add documents
+    await doc_store.add_documents(chunks)
+    
+    # Example similarity search
+    similar_chunks = await doc_store.get_similar_chunks("lower back pain", top_k=5)
+    print("\nSimilar chunks:")
+    for chunk in similar_chunks:
+        print(f"\nContent: {chunk['content']}")
+        print(f"Similarity: {chunk['similarity']:.3f}")
+        print(f"Metadata: {chunk['metadata']}")
 
 if __name__ == "__main__":
     asyncio.run(main())
