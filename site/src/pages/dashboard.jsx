@@ -3,6 +3,7 @@ import React, { useState, useEffect, useRef } from 'react';
 const Dashboard = () => {
   const [isRecording, setIsRecording] = useState(false);
   const [realtimeTranscripts, setRealtimeTranscripts] = useState([]);
+  const [modelResponses, setModelResponses] = useState([]);
   const [whisperTranscripts, setWhisperTranscripts] = useState([]);
   const [error, setError] = useState(null);
   const audioRef = useRef(null);
@@ -85,7 +86,6 @@ const Dashboard = () => {
     };
 
     floatTo16BitPCM(view, 44, samples);
-
     return new Blob([view], { type: 'audio/wav' });
   };
 
@@ -118,11 +118,19 @@ const Dashboard = () => {
     dataChannel.onopen = () => {
       console.log('WebRTC data channel opened');
       if (dataChannel.readyState === 'open') {
+        const sessionUpdate = {
+          type: "session.update",
+          session: {
+            instructions: "You are a helpful AI assistant. Be concise but friendly in your responses.",
+          },
+        };
+        dataChannel.send(JSON.stringify(sessionUpdate));
+
+        // Create initial response to start conversation
         const responseCreate = {
           type: "response.create",
           response: {
-            modalities: ["audio"],
-            instructions: "Please respond with natural audio",
+            modalities: ["audio", "text"],
           },
         };
         dataChannel.send(JSON.stringify(responseCreate));
@@ -132,11 +140,53 @@ const Dashboard = () => {
     dataChannel.onmessage = (e) => {
       try {
         const realtimeEvent = JSON.parse(e.data);
-        if (realtimeEvent.type === 'text') {
-          setRealtimeTranscripts(prev => [...prev, {
-            text: realtimeEvent.text,
-            timestamp: new Date()
-          }]);
+        console.log('Received event:', realtimeEvent);
+
+        // Handle different types of events
+        switch (realtimeEvent.type) {
+          case 'response.content_part.done':
+            if (realtimeEvent.part?.transcript) {
+              setModelResponses(prev => [...prev, {
+                text: realtimeEvent.part.transcript,
+                timestamp: new Date(),
+                complete: true
+              }]);
+            }
+            break;
+
+          case 'response.audio_transcript.delta':
+            setRealtimeTranscripts(prev => {
+              const newTranscripts = [...prev];
+              if (newTranscripts.length === 0 || !newTranscripts[newTranscripts.length - 1].interim) {
+                newTranscripts.push({ 
+                  text: realtimeEvent.delta.text, 
+                  timestamp: new Date(), 
+                  interim: true 
+                });
+              } else {
+                newTranscripts[newTranscripts.length - 1].text = realtimeEvent.delta.text;
+              }
+              return newTranscripts;
+            });
+            break;
+
+          case 'response.audio_transcript.done':
+            setRealtimeTranscripts(prev => {
+              const newTranscripts = [...prev];
+              if (newTranscripts.length > 0) {
+                newTranscripts[newTranscripts.length - 1].interim = false;
+              }
+              return newTranscripts;
+            });
+            break;
+
+          case 'input_audio_buffer.speech_started':
+            setRealtimeTranscripts(prev => [...prev, { 
+              text: "Listening...", 
+              timestamp: new Date(),
+              interim: true 
+            }]);
+            break;
         }
       } catch (err) {
         console.error('Error processing message:', err);
@@ -150,6 +200,7 @@ const Dashboard = () => {
     try {
       setError(null);
       setRealtimeTranscripts([]);
+      setModelResponses([]);
       setWhisperTranscripts([]);
 
       const tokenResponse = await fetch('/api/get-realtime-token', {
@@ -162,22 +213,34 @@ const Dashboard = () => {
       const EPHEMERAL_KEY = data.clientSecret;
 
       const peerConnection = new RTCPeerConnection({
-        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
-        sdpSemantics: 'unified-plan'
+        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
       });
       peerConnectionRef.current = peerConnection;
 
-      // Add audio transceiver for bidirectional communication
-      peerConnection.addTransceiver('audio', {
-        direction: 'sendrecv'
-      });
+      // Set up audio element for playback
+      if (!audioRef.current) {
+        audioRef.current = new Audio();
+        audioRef.current.autoplay = true;
+      }
 
-      // Handle incoming audio
+      // Handle incoming audio tracks
       peerConnection.ontrack = (e) => {
         if (e.track.kind === 'audio') {
-          audioRef.current.srcObject = e.streams[0];
+          console.log('Received audio track');
+          const audioStream = new MediaStream([e.track]);
+          audioRef.current.srcObject = audioStream;
+          
+          audioRef.current.play().catch(error => {
+            console.log('Autoplay prevented:', error);
+            document.addEventListener('click', () => {
+              audioRef.current.play();
+            }, { once: true });
+          });
         }
       };
+
+      // Add audio transceiver for bidirectional audio
+      peerConnection.addTransceiver('audio', { direction: 'sendrecv' });
 
       setupDataChannel(peerConnection);
 
@@ -187,34 +250,29 @@ const Dashboard = () => {
           sampleRate: 16000,
           channelCount: 1,
           echoCancellation: true,
-          noiseSuppression: true,
-          sampleSize: 16
+          noiseSuppression: true
         }
       });
       mediaStreamRef.current = stream;
 
-      // Add local stream to connection
+      // Add local stream tracks
       stream.getTracks().forEach(track => {
         peerConnection.addTrack(track, stream);
       });
 
-      // Setup audio processing
+      // Setup audio processing for Whisper
       setupAudioProcessing(stream);
 
-      // Create and modify offer
+      // Create and set local description
       const offer = await peerConnection.createOffer();
       await peerConnection.setLocalDescription(offer);
 
-      // Modify SDP for better compatibility
-      const modifiedSDP = offer.sdp
-        .replace(/a=fmtp:111/g, 'a=fmtp:111 minptime=10; useinbandfec=1')
-        .replace(/profile-level-id=42e01f/g, '');
-
+      // Send offer to server
       const baseUrl = "https://api.openai.com/v1/realtime";
-      const model = "gpt-4o-mini-realtime-preview";
+      const model = "gpt-4o-realtime-preview";
       const sdpResponse = await fetch(`${baseUrl}?model=${model}`, {
         method: "POST",
-        body: modifiedSDP,
+        body: offer.sdp,
         headers: {
           Authorization: `Bearer ${EPHEMERAL_KEY}`,
           "Content-Type": "application/sdp"
@@ -255,23 +313,23 @@ const Dashboard = () => {
       processorNodeRef.current.disconnect();
       processorNodeRef.current = null;
     }
+    if (audioRef.current) {
+      audioRef.current.srcObject = null;
+    }
     setIsRecording(false);
   };
 
   useEffect(() => {
-    audioRef.current = new Audio();
-    audioRef.current.autoplay = true;
-    
     return () => stopRecording();
   }, []);
 
   return (
     <div className="container mx-auto p-4">
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="bg-white rounded-lg shadow-lg">
           <div className="p-6">
             <div className="flex justify-between items-center mb-4">
-              <h2 className="text-2xl font-bold">Real-time Transcription</h2>
+              <h2 className="text-2xl font-bold">Your Speech</h2>
               <button
                 onClick={isRecording ? stopRecording : setupWebRTC}
                 className={`px-4 py-2 rounded-md ${
@@ -284,9 +342,9 @@ const Dashboard = () => {
             {error && (
               <div className="bg-red-100 p-3 rounded mb-4">{error}</div>
             )}
-            <div className="space-y-4">
+            <div className="space-y-4 max-h-96 overflow-y-auto">
               {realtimeTranscripts.map((t, i) => (
-                <div key={i} className="bg-gray-50 p-3 rounded">
+                <div key={i} className={`p-3 rounded ${t.interim ? 'bg-gray-50' : 'bg-blue-50'}`}>
                   <p>{t.text}</p>
                   <small>{t.timestamp.toLocaleTimeString()}</small>
                 </div>
@@ -297,8 +355,22 @@ const Dashboard = () => {
 
         <div className="bg-white rounded-lg shadow-lg">
           <div className="p-6">
+            <h2 className="text-2xl font-bold mb-4">Model Responses</h2>
+            <div className="space-y-4 max-h-96 overflow-y-auto">
+              {modelResponses.map((r, i) => (
+                <div key={i} className="p-3 rounded bg-green-50">
+                  <p>{r.text}</p>
+                  <small>{r.timestamp.toLocaleTimeString()}</small>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-lg shadow-lg">
+          <div className="p-6">
             <h2 className="text-2xl font-bold mb-4">Whisper Translation</h2>
-            <div className="space-y-4">
+            <div className="space-y-4 max-h-96 overflow-y-auto">
               {whisperTranscripts.map((t, i) => (
                 <div key={i} className="bg-gray-50 p-3 rounded">
                   <p>{t.text}</p>
