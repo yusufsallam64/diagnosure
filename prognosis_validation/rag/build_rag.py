@@ -101,7 +101,7 @@ async def initialize_rag(working_dir: str, embedding_func: EmbeddingFunc, collec
     storage = MongoVectorStorage(
         namespace="mongodb_storage",
         global_config={
-            "working_dir": working_dir,
+            "working_dir": working_dir,  # Ensure working_dir is included
             "vector_db_storage_cls_kwargs": {
                 "db_name": collection.database.name,
                 "collection_name": collection.name
@@ -110,17 +110,26 @@ async def initialize_rag(working_dir: str, embedding_func: EmbeddingFunc, collec
         embedding_func=embedding_func
     )
     
-    return LightRAG(
-        working_dir=working_dir,
-        llm_model_func=gpt_4o_mini_complete,
-        embedding_func=embedding_func,
-        vector_storage=storage,  # Pass instance
-        embedding_batch_num=64,
-        addon_params={
-            "insert_batch_size": 32,
-            "cosine_better_than_threshold": 0.2
+    # Define global_config for LightRAG
+    global_config = {
+        "working_dir": working_dir,  # Ensure working_dir is included
+        "vector_db_storage_cls_kwargs": {
+            "db_name": collection.database.name,
+            "collection_name": collection.name
         }
-    )
+    }
+    
+    return LightRAG(
+    working_dir=working_dir,
+    llm_model_func=gpt_4o_mini_complete,
+    embedding_func=embedding_func,
+    vector_storage="MongoVectorStorage",  # Pass the string identifier
+    embedding_batch_num=64,
+    addon_params={
+        "insert_batch_size": 32,
+        "cosine_better_than_threshold": 0.2
+    }
+)
 
 async def process_chunks(chunks: list[dict], rag: LightRAG):
     """Process chunks using LightRAG's built-in batch processing"""
@@ -142,7 +151,9 @@ async def process_chunks(chunks: list[dict], rag: LightRAG):
             for chunk in page_chunks:
                 processed_chunks += 1
                 formatted_chunk = format_chunk(chunk)
-                await rag.ainsert([formatted_chunk])
+                
+                # Extract the content string before insertion
+                await rag.ainsert([formatted_chunk["content"]])  # 🟢 Changed line
                 
                 # Log progress
                 logger.info(

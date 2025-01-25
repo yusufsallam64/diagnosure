@@ -1,177 +1,100 @@
 from dataclasses import dataclass, field
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Any
 from pymongo.collection import Collection
 from lightrag.storage import BaseVectorStorage
-import asyncio
-import time
-import numpy as np
-from tqdm import tqdm
+from asyncio import to_thread
+from pymongo import ReplaceOne
+import logging
+
+logger = logging.getLogger(__name__)
+
+class CollectionDescriptor:
+    """A descriptor that manages MongoDB collection access while avoiding serialization issues"""
+    
+    def __get__(self, obj, objtype=None):
+        if obj is None:
+            return self
+        # Initialize collection if needed
+        if obj._collection is None:
+            obj._initialize_collection()
+        return obj._collection
+    
+    def __set__(self, obj, value):
+        obj._collection = value
 
 @dataclass
 class MongoVectorStorage(BaseVectorStorage):
-    _collection: Optional[Collection] = field(default=None, init=False)
+    _collection: Optional[Collection] = field(default=None, init=False, repr=False)
+    _connection_params: Dict[str, Any] = field(default_factory=dict)
     
     def __post_init__(self):
         config = self.global_config.get("vector_db_storage_cls_kwargs", {})
-        
+        self._connection_params = {
+            "db_name": config.get("db_name", "rag_db"),
+            "collection_name": config.get("collection_name", "embeddings")
+        }
+        self._initialize_collection()
+
+    def _initialize_collection(self):
         if not self._collection:
             from atlas_manager import get_mongodb
-            mongodb = get_mongodb(
-                db_name=config.get("db_name", "rag_db"),
-                collection_name=config.get("collection_name", "embeddings")
-            )
+            mongodb = get_mongodb(**self._connection_params)
             self._collection = mongodb.get_collection()
             self._ensure_vector_search_index()
-            
+    
+    def _ensure_vector_search_index(self):
+        """Using existing vector search index"""
+        print("Using existing vector search index")
+        pass
+
     @property
     def collection(self) -> Collection:
         if self._collection is None:
-            raise ValueError("MongoDB collection not initialized")
+            self._initialize_collection()
         return self._collection
-    
-    def _ensure_vector_search_index(self):
-        """Ensure vector search index exists in MongoDB"""
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        if self._collection:
+            self._collection.database.client.close()
+        state['_collection'] = None
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self._initialize_collection()
+        
+    async def upsert(self, data: dict[str, dict]):
+        """Upsert vector data into MongoDB collection (synchronous pymongo version)."""
         try:
-            existing_indexes = list(self.collection.list_indexes())
-            vector_index_exists = any(
-                index.get('name') == 'vector_index' 
-                for index in existing_indexes
-            )
-            
-            if not vector_index_exists:
-                print("Creating vector search index...")
-                
-                index_model = {
-                    "mappings": {
-                        "dynamic": True,
-                        "fields": {
-                            "embedding": {
-                                "dimensions": self.embedding_func.embedding_dim,
-                                "similarity": "cosine",
-                                "type": "knnVector"
-                            }
-                        }
-                    }
-                }
-                
-                self.collection.create_index(
-                    [("embedding", "vectorSearch")],
-                    name="vector_index",
-                    **index_model
+            operations = []
+            for doc_id, doc_data in data.items():
+                vector = doc_data.get("__vector__", [])
+                content = doc_data.get("content", "")
+                operations.append(
+                    ReplaceOne(
+                        {"_id": doc_id},
+                        {
+                            "_id": doc_id,
+                            "content": content,
+                            "vector": vector,
+                            "metadata": doc_data.get("metadata", {}),
+                        },
+                        upsert=True,
+                    )
                 )
-                
-                print("Vector search index created successfully")
-                
+
+            if operations:
+                # Wrap synchronous pymongo call in async thread
+                await to_thread(
+                    self.collection.bulk_write, 
+                    operations, 
+                    ordered=False
+                )
+
+            logger.info(f"Upserted {len(operations)} documents into MongoDB")
+            return list(data.keys())
+
         except Exception as e:
-            print(f"Error creating vector search index: {str(e)}")
+            logger.error(f"Error in MongoDB upsert: {str(e)}")
             raise
-
-    async def upsert(self, data: Dict[str, Dict]):
-        """Insert or update vectors in MongoDB"""
-        print(f"Inserting {len(data)} vectors")
-        if not len(data):
-            return []
-
-        current_time = time.time()
-        list_data = [
-            {
-                "id": k,
-                "created_at": current_time,
-                "content": v["content"],
-                **{k1: v1 for k1, v1 in v.items() if k1 in self.meta_fields},
-            }
-            for k, v in data.items()
-        ]
-        
-        contents = [v["content"] for v in data.values()]
-        batches = [
-            contents[i : i + self._max_batch_size]
-            for i in range(0, len(contents), self._max_batch_size)
-        ]
-
-        async def wrapped_task(batch):
-            result = await self.embedding_func(batch)
-            pbar.update(1)
-            return result
-
-        embedding_tasks = [wrapped_task(batch) for batch in batches]
-        pbar = tqdm(total=len(embedding_tasks), desc="Generating embeddings", unit="batch")
-        embeddings_list = await asyncio.gather(*embedding_tasks)
-        pbar.close()
-
-        embeddings = np.concatenate(embeddings_list)
-        if len(embeddings) == len(list_data):
-            for i, d in enumerate(list_data):
-                d["embedding"] = embeddings[i].tolist()
-            
-            operations = [
-                {
-                    "replaceOne": {
-                        "filter": {"id": d["id"]},
-                        "replacement": d,
-                        "upsert": True
-                    }
-                }
-                for d in list_data
-            ]
-            
-            result = self.collection.bulk_write(operations)
-            return [d["id"] for d in list_data]
-        else:
-            print(f"Embedding mismatch: {len(embeddings)} != {len(list_data)}")
-            return []
-
-    async def query(self, query: str, top_k: int = 5):
-        """Search for similar vectors using MongoDB vector search"""
-        embedding = await self.embedding_func([query])
-        embedding = embedding[0]
-
-        pipeline = [
-            {
-                "$vectorSearch": {
-                    "queryVector": embedding.tolist(),
-                    "path": "embedding",
-                    "numCandidates": top_k * 10,
-                    "limit": top_k,
-                    "index": "vector_index",
-                }
-            },
-            {
-                "$project": {
-                    "id": 1,
-                    "created_at": 1,
-                    "content": 1,
-                    "distance": {"$meta": "vectorSearchScore"},
-                    "metadata": "$$ROOT"
-                }
-            }
-        ]
-
-        results = list(self.collection.aggregate(pipeline))
-        
-        formatted_results = [
-            {
-                "id": doc["id"],
-                "distance": doc["distance"],
-                "created_at": doc["created_at"],
-                "content": doc["content"],
-                **{k: v for k, v in doc["metadata"].items() 
-                   if k in self.meta_fields and k not in ["id", "embedding", "created_at", "content"]}
-            }
-            for doc in results
-            if doc["distance"] >= self.cosine_better_than_threshold
-        ]
-
-        return formatted_results
-
-    async def delete(self, ids: List[str]):
-        """Delete vectors with specified IDs"""
-        try:
-            result = self.collection.delete_many({"id": {"$in": ids}})
-            print(f"Deleted {result.deleted_count} vectors")
-        except Exception as e:
-            print(f"Error deleting vectors: {str(e)}")
-
-    async def index_done_callback(self):
-        """Called when indexing is complete - not needed for MongoDB"""
-        pass
