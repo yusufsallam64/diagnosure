@@ -1,11 +1,12 @@
+# chunker.py
 from typing import List, Dict, Any
-import re
+import regex
 from dataclasses import dataclass
 from datetime import datetime
+from functools import lru_cache
 
 @dataclass
 class MedicalChunk:
-    """Represents a chunk of medical text with metadata"""
     content: str
     section_type: str
     page_num: int
@@ -13,116 +14,97 @@ class MedicalChunk:
     metadata: Dict[str, Any]
 
 class MedicalDocumentChunker:
-    """Handles chunking of medical documents with domain-specific logic"""
-    
     def __init__(self, 
                  max_chunk_size: int = 500,
                  min_chunk_size: int = 100):
         self.max_chunk_size = max_chunk_size
         self.min_chunk_size = min_chunk_size
         
-        # Patterns that should not be split
+        self._compile_patterns()
+        
+        self.combined_break_pattern = regex.compile('|'.join([
+            r'(?<=\.)\s+(?=[A-Z])',
+            r'(?<=:)\s+',
+            r'\n\s*\n',
+            r'(?<=\))\s+(?=[A-Z])',
+            r'•\s*|\*\s*|[\d]+\.\s*'
+        ]), regex.V1)
+    
+    def _compile_patterns(self):
         self.preserve_patterns = [
-            r'\b\d{1,2}/\d{1,2}/\d{2,4}\b',  # Dates
-            r'\b\d+\s*(?:mg|ml|g|kg|mm|cm)\b',  # Measurements
-            r'\b(?:Mr\.|Mrs\.|Dr\.|Prof\.)\s+\w+',  # Titles
-            r'\b[A-Z]\d+\.\d+\b',  # Medical codes
+            (regex.compile(pattern), f'__PROTECT_{i}__') for i, pattern in enumerate([
+                r'\b\d{1,2}/\d{1,2}/\d{2,4}\b',
+                r'\b\d+\s*(?:mg|ml|g|kg|mm|cm)\b',
+                r'\b(?:Mr\.|Mrs\.|Dr\.|Prof\.)\s+\w+',
+                r'\b[A-Z]\d+\.\d+\b',
+            ])
         ]
         
-        # Patterns that indicate logical breaks
-        self.break_patterns = [
-            r'(?<=\.)\s+(?=[A-Z])',  # Sentence endings
-            r'(?<=:)\s+',  # After colons
-            r'\n\s*\n',  # Double line breaks
-            r'(?<=\))\s+(?=[A-Z])',  # After closing parentheses
-            r'•\s*|\*\s*|[\d]+\.\s*',  # List markers
-        ]
+        self.measurement_pattern = self.preserve_patterns[1][0]
+        self.date_pattern = self.preserve_patterns[0][0]
 
-    def chunk_section(self, section: 'MedicalSection') -> List[MedicalChunk]:
-        """Convert a medical section into appropriate chunks"""
+    @lru_cache(maxsize=1024)
+    def _protect_patterns(self, text: str) -> str:
+        protected_text = text
+        for pattern, replacement in self.preserve_patterns:
+            protected_text = pattern.sub(replacement, protected_text)
+        return protected_text
+    
+    @lru_cache(maxsize=1024)
+    def _restore_patterns(self, text: str) -> str:
+        for i in range(len(self.preserve_patterns)):
+            text = text.replace(f'__PROTECT_{i}__', ' ')
+        return text
+
+    def chunk_section(self, section) -> List[MedicalChunk]:
+        if not section.content.strip():
+            return []
+
+        segments = [s.strip() for s in self.combined_break_pattern.split(section.content) if s.strip()]
+        
         chunks = []
-        content = section.content
-        
-        # Protect patterns that shouldn't be split
-        protected_content = self._protect_patterns(content)
-        
-        # Split into initial segments
-        segments = self._split_into_segments(protected_content)
-        
-        # Combine segments into appropriate chunks
-        current_chunk = []
+        current_segments = []
         current_length = 0
         
         for segment in segments:
-            # Restore protected patterns
-            segment = self._restore_patterns(segment)
             segment_length = len(segment)
             
-            if current_length + segment_length > self.max_chunk_size and current_chunk:
-                # Create chunk from accumulated segments
+            if current_length + segment_length > self.max_chunk_size and current_segments:
+                chunk_content = ' '.join(current_segments)
                 chunks.append(self._create_chunk(
-                    ' '.join(current_chunk),
+                    chunk_content,
                     section.title,
                     section.page_num
                 ))
-                current_chunk = []
+                current_segments = []
                 current_length = 0
             
-            current_chunk.append(segment)
+            current_segments.append(segment)
             current_length += segment_length
         
-        # Don't forget the last chunk
-        if current_chunk:
+        if current_segments:
+            chunk_content = ' '.join(current_segments)
             chunks.append(self._create_chunk(
-                ' '.join(current_chunk),
+                chunk_content,
                 section.title,
                 section.page_num
             ))
         
         return chunks
     
-    def _protect_patterns(self, text: str) -> str:
-        """Protect certain patterns from being split"""
-        protected_text = text
-        for pattern in self.preserve_patterns:
-            protected_text = re.sub(
-                pattern,
-                lambda m: m.group().replace(' ', '█'),
-                protected_text
-            )
-        return protected_text
-    
-    def _restore_patterns(self, text: str) -> str:
-        """Restore protected patterns"""
-        return text.replace('█', ' ')
-    
-    def _split_into_segments(self, text: str) -> List[str]:
-        """Split text into logical segments"""
-        segments = [text]
-        
-        for pattern in self.break_patterns:
-            new_segments = []
-            for segment in segments:
-                splits = re.split(pattern, segment)
-                new_segments.extend(s.strip() for s in splits if s.strip())
-            segments = new_segments
-        
-        return segments
-    
     def _create_chunk(self, 
                      content: str, 
                      section_type: str,
                      page_num: int) -> MedicalChunk:
-        """Create a chunk with appropriate metadata"""
-        chunk_id = f"{section_type}_{page_num}_{datetime.now().timestamp()}"
+        chunk_id = f"{section_type}_{page_num}_{int(datetime.now().timestamp())}"
         
         metadata = {
             'section_type': section_type,
             'page_num': page_num,
             'chunk_length': len(content),
             'created_at': datetime.now().isoformat(),
-            'contains_measurements': bool(re.search(self.preserve_patterns[1], content)),
-            'contains_dates': bool(re.search(self.preserve_patterns[0], content))
+            'contains_measurements': bool(self.measurement_pattern.search(content)),
+            'contains_dates': bool(self.date_pattern.search(content))
         }
         
         return MedicalChunk(

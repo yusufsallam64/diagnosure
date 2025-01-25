@@ -1,12 +1,13 @@
-# main.py
 import json
 import logging
 from pathlib import Path
 from typing import Dict, List
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
+import os
 
-# Import our processor and chunker
-from ocr.pdf_processor import MedicalDocumentProcessor
+# Import our processors
+from chunking.parallel_processor import ParallelMedicalDocumentProcessor
 from chunking.chunker import MedicalDocumentChunker, MedicalChunk
 
 logging.basicConfig(
@@ -15,20 +16,27 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-class MedicalDocumentPipeline:
-    """Orchestrates the complete document processing pipeline"""
+class ParallelMedicalDocumentPipeline:
+    """Orchestrates the complete document processing pipeline with parallel processing"""
     
     def __init__(self, 
                  data_dir: str = 'data',
                  output_dir: str = 'processed',
-                 chunk_size: int = 500):
+                 chunk_size: int = 500,
+                 max_workers: int = None):
         # Initialize paths
         self.data_dir = Path(data_dir)
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(exist_ok=True)
         
+        # Determine number of workers
+        self.max_workers = max_workers or os.cpu_count()
+        
         # Initialize processors
-        self.doc_processor = MedicalDocumentProcessor(output_dir=str(output_dir))
+        self.doc_processor = ParallelMedicalDocumentProcessor(
+            output_dir=str(output_dir),
+            max_workers=self.max_workers
+        )
         self.chunker = MedicalDocumentChunker(max_chunk_size=chunk_size)
         
     def process_document(self, pdf_path: Path) -> Dict:
@@ -36,15 +44,27 @@ class MedicalDocumentPipeline:
         logger.info(f"Starting processing of {pdf_path}")
         
         try:
-            # Step 1: OCR Processing
+            # Step 1: Parallel OCR Processing
             sections = self.doc_processor.process_pdf(str(pdf_path))
             logger.info(f"Found {len(sections)} sections in document")
             
-            # Step 2: Chunking
-            all_chunks = []
-            for section in sections:
-                chunks = self.chunker.chunk_section(section)
-                all_chunks.extend(chunks)
+            # Step 2: Parallel Chunking
+            with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+                # Process sections in parallel
+                future_chunks = [
+                    executor.submit(self.chunker.chunk_section, section)
+                    for section in sections
+                ]
+                
+                # Collect all chunks
+                all_chunks = []
+                for future in future_chunks:
+                    try:
+                        chunks = future.result()
+                        all_chunks.extend(chunks)
+                    except Exception as e:
+                        logger.error(f"Error during chunking: {e}")
+                        continue
             
             logger.info(f"Created {len(all_chunks)} chunks from sections")
             
@@ -86,8 +106,8 @@ class MedicalDocumentPipeline:
             raise
 
 def main():
-    # Initialize pipeline
-    pipeline = MedicalDocumentPipeline()
+    # Initialize pipeline with parallel processing
+    pipeline = ParallelMedicalDocumentPipeline()
     
     # Process all PDFs in data directory
     for pdf_path in pipeline.data_dir.glob('*.pdf'):
