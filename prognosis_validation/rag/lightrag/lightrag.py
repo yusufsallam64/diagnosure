@@ -391,16 +391,31 @@ class LightRAG:
                     chunks = {
                         compute_mdhash_id(chunk["content"], prefix="chunk-"): {
                             **chunk,
-                            "metadata": doc["metadata"],  # Inherit metadata from parent document
+                            "metadata": doc["metadata"],
                             "full_doc_id": doc_id,
                         }
+                        # Fixed code:
                         for chunk in self.chunking_func(
-                            doc["content"], 
-                            split_by_character=split_by_character,
+                            doc["content"],
+                            split_by_character=None,  # ✅ Use None or a valid string (e.g., "\n")
                             split_by_character_only=split_by_character_only,
+                            overlap_token_size=self.chunk_overlap_token_size,
+                            max_token_size=self.chunk_token_size,
+                            tiktoken_model=self.tiktoken_model_name,
                             **self.chunking_func_kwargs
-                        )
+                        )       
                     }
+
+
+
+                    chunk_contents = [chunk["content"] for chunk in chunks.values()]
+                    embeddings = await self.embedding_func(chunk_contents)
+                    
+                    # Add vectors to chunks
+                    for (chunk_id, chunk), embedding in zip(chunks.items(), embeddings):
+                        chunks[chunk_id]["__vector__"] = embedding.tolist()  # Add vector data
+
+                    await self.chunks_vdb.upsert(chunks)
 
                     # Update status with chunks information
                     doc_status.update(
