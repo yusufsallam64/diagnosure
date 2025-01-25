@@ -65,36 +65,35 @@ class MongoVectorStorage(BaseVectorStorage):
         self._initialize_collection()
         
     async def upsert(self, data: dict[str, dict]):
-        """Upsert vector data into MongoDB collection (synchronous pymongo version)."""
+        """Upsert vector data into MongoDB collection"""
         try:
             operations = []
             for doc_id, doc_data in data.items():
+                # Handle missing vector field gracefully
                 vector = doc_data.get("__vector__", [])
-                content = doc_data.get("content", "")
+                
                 operations.append(
                     ReplaceOne(
                         {"_id": doc_id},
                         {
                             "_id": doc_id,
-                            "content": content,
+                            "content": doc_data.get("content", ""),
                             "vector": vector,
-                            "metadata": doc_data.get("metadata", {}),
+                            "metadata": doc_data.get("metadata", {})
                         },
-                        upsert=True,
+                        upsert=True
                     )
                 )
 
             if operations:
-                # Wrap synchronous pymongo call in async thread
                 await to_thread(
                     self.collection.bulk_write, 
                     operations, 
                     ordered=False
                 )
-
+                
             logger.info(f"Upserted {len(operations)} documents into MongoDB")
             return list(data.keys())
-
         except Exception as e:
             logger.error(f"Error in MongoDB upsert: {str(e)}")
-            raise
+           

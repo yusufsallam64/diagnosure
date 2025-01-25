@@ -97,39 +97,21 @@ async def create_embedding_function(device: str) -> EmbeddingFunc:
         raise
 
 async def initialize_rag(working_dir: str, embedding_func: EmbeddingFunc, collection) -> LightRAG:
-    # Create storage instance first
-    storage = MongoVectorStorage(
-        namespace="mongodb_storage",
-        global_config={
-            "working_dir": working_dir,  # Ensure working_dir is included
-            "vector_db_storage_cls_kwargs": {
-                "db_name": collection.database.name,
-                "collection_name": collection.name
-            }
-        },
-        embedding_func=embedding_func
-    )
-    
-    # Define global_config for LightRAG
-    global_config = {
-        "working_dir": working_dir,  # Ensure working_dir is included
-        "vector_db_storage_cls_kwargs": {
+    return LightRAG(
+        working_dir=working_dir,
+        llm_model_func=gpt_4o_mini_complete,
+        embedding_func=embedding_func,
+        vector_storage="MongoVectorStorage",
+        embedding_batch_num=64,
+        vector_db_storage_cls_kwargs={  # Pass MongoDB config here
             "db_name": collection.database.name,
             "collection_name": collection.name
+        },
+        addon_params={
+            "insert_batch_size": 32,
+            "cosine_better_than_threshold": 0.2
         }
-    }
-    
-    return LightRAG(
-    working_dir=working_dir,
-    llm_model_func=gpt_4o_mini_complete,
-    embedding_func=embedding_func,
-    vector_storage="MongoVectorStorage",  # Pass the string identifier
-    embedding_batch_num=64,
-    addon_params={
-        "insert_batch_size": 32,
-        "cosine_better_than_threshold": 0.2
-    }
-)
+    )
 
 async def process_chunks(chunks: list[dict], rag: LightRAG):
     """Process chunks using LightRAG's built-in batch processing"""
@@ -137,36 +119,40 @@ async def process_chunks(chunks: list[dict], rag: LightRAG):
         total_chunks = len(chunks)
         processed_chunks = 0
         
-        # Group chunks by page number for organized processing
+        # Group chunks by page number
         pages = defaultdict(list)
         for chunk in chunks:
             pages[chunk['page_num']].append(chunk)
         
-        # Process chunks page by page
+        # Process pages sequentially
         for page_num in sorted(pages.keys()):
             page_chunks = pages[page_num]
             logger.info(f"\nProcessing page {page_num}")
             
-            # Process each chunk in the page
+            # Prepare batch of properly formatted documents
+            documents = []
+            
             for chunk in page_chunks:
                 processed_chunks += 1
                 formatted_chunk = format_chunk(chunk)
                 
-                # Extract the content string before insertion
-                await rag.ainsert([formatted_chunk["content"]])  # 🟢 Changed line
+                # Create document with required structure
+                document = {
+                    "content": formatted_chunk["content"],
+                    "metadata": formatted_chunk["metadata"]
+                }
+                documents.append(document)
                 
-                # Log progress
                 logger.info(
-                    f"Progress: {processed_chunks}/{total_chunks} total chunks -- "
-                    f"Page {page_num}, "
+                    f"Progress: {processed_chunks}/{total_chunks} chunks | "
+                    f"Page {page_num} | "
                     f"Section: {chunk['section_type']}"
                 )
-                
-                # Small delay every 10 chunks to prevent overwhelming the system
-                if processed_chunks % 10 == 0:
-                    await asyncio.sleep(0.1)
+
+            # Insert using LightRAG's format with metadata
+            await rag.ainsert(documents)
         
-        logger.info(f"\nSuccessfully processed all {total_chunks} chunks")
+        logger.info(f"\nProcessed all {total_chunks} chunks successfully")
     except Exception as e:
         logger.error(f"Error processing chunks: {str(e)}")
         raise
@@ -190,12 +176,6 @@ async def main():
     print("Collection:", collection.name)
     print("Database:", collection.database.name)
     print("Indexes:", list(collection.list_indexes()))
-
-    # Test basic operations
-    test_doc = {"test": "value"}
-    collection.insert_one(test_doc)
-    print("Test insert successful")
-
     
     try:
         # Setup device

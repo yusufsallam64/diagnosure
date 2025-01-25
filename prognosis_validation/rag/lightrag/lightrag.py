@@ -326,34 +326,30 @@ class LightRAG:
         )
 
     async def ainsert(
-        self, string_or_strings, split_by_character=None, split_by_character_only=False
+        self, 
+        documents: list[dict],  # Change input type to list of dicts
+        split_by_character=None, 
+        split_by_character_only=False
     ):
-        """Insert documents with checkpoint support
+        """Insert documents with metadata"""
+        # Extract content from documents
+        unique_contents = list({
+            doc["content"].strip(): doc 
+            for doc in documents  # Assume documents have "content" and "metadata"
+        }.values())
 
-        Args:
-            string_or_strings: Single document string or list of document strings
-            split_by_character: if split_by_character is not None, split the string by character, if chunk longer than
-            chunk_size, split the sub chunk by token size.
-            split_by_character_only: if split_by_character_only is True, split the string by character only, when
-            split_by_character is None, this parameter is ignored.
-        """
-        if isinstance(string_or_strings, str):
-            string_or_strings = [string_or_strings]
-
-        # 1. Remove duplicate contents from the list
-        unique_contents = list(set(doc.strip() for doc in string_or_strings))
-
-        # 2. Generate document IDs and initial status
+        # Generate document IDs and include metadata
         new_docs = {
-            compute_mdhash_id(content, prefix="doc-"): {
-                "content": content,
-                "content_summary": self._get_content_summary(content),
-                "content_length": len(content),
+            compute_mdhash_id(doc["content"], prefix="doc-"): {
+                "content": doc["content"],
+                "metadata": doc.get("metadata", {}),  # Include metadata here
+                "content_summary": self._get_content_summary(doc["content"]),
+                "content_length": len(doc["content"]),
                 "status": DocStatus.PENDING,
                 "created_at": datetime.now().isoformat(),
                 "updated_at": datetime.now().isoformat(),
             }
-            for content in unique_contents
+            for doc in unique_contents
         }
 
         # 3. Filter out already processed documents
@@ -393,18 +389,16 @@ class LightRAG:
 
                     # Generate chunks from document
                     chunks = {
-                        compute_mdhash_id(dp["content"], prefix="chunk-"): {
-                            **dp,
+                        compute_mdhash_id(chunk["content"], prefix="chunk-"): {
+                            **chunk,
+                            "metadata": doc["metadata"],  # Inherit metadata from parent document
                             "full_doc_id": doc_id,
                         }
-                        for dp in self.chunking_func(
-                            doc["content"],
+                        for chunk in self.chunking_func(
+                            doc["content"], 
                             split_by_character=split_by_character,
                             split_by_character_only=split_by_character_only,
-                            overlap_token_size=self.chunk_overlap_token_size,
-                            max_token_size=self.chunk_token_size,
-                            tiktoken_model=self.tiktoken_model_name,
-                            **self.chunking_func_kwargs,
+                            **self.chunking_func_kwargs
                         )
                     }
 
