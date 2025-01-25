@@ -3,3 +3,5 @@ prognosis_validation/data
 .env
 **/.DS_Store
 **/__pycache__
+*.log
+lightrag_cache
