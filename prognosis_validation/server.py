@@ -1,17 +1,13 @@
+from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Optional, Dict, Any, List
 import motor.motor_asyncio
 from datetime import datetime
-import logging
 from pathlib import Path
 from rag.query_rag import RAGQueryEngine
 from rag.chromadb_manager import start_chroma_server
-
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 # Global variables
 rag_engine = None
@@ -28,27 +24,35 @@ async def lifespan(app: FastAPI):
         
         # Start the ChromaDB server
         start_chroma_server()
-        logger.info("ChromaDB server started")
+        print("ChromaDB server started")  # Replaced logger with print
 
         # Initialize RAG engine
         rag_engine = RAGQueryEngine(str(store_path))
         await rag_engine.initialize()
-        logger.info("RAG engine initialized")
+        print("RAG engine initialized")  # Replaced logger with print
 
     except Exception as e:
-        logger.error(f"Startup error: {e}")
+        print(f"Startup error: {e}")  # Replaced logger with print
         raise
 
     yield  # Server is running
 
     # Shutdown
-    # Add any cleanup code here if needed
-    logger.info("Shutting down application")
+    print("Shutting down application")  # Replaced logger with print
 
 # Initialize FastAPI app with lifespan
 app = FastAPI(
     title="Medical Diagnosis Validation System",
     lifespan=lifespan
+)
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],  # Adjust this to your frontend URL
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # MongoDB configuration
@@ -134,8 +138,6 @@ async def validate_diagnosis(
         )
 
         # Process the analysis into structured response
-        # Here you would typically parse the GPT response into structured data
-        # For now using mock values for demonstration
         return ValidationResponse(
             validation_result={
                 "analysis": analysis,
@@ -152,7 +154,7 @@ async def validate_diagnosis(
         )
 
     except Exception as e:
-        logger.error(f"Error in diagnosis validation: {e}")
+        print(f"Error in diagnosis validation: {e}")  # Replaced logger with print
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/validate_diagnosis", response_model=ValidationResponse)
@@ -171,7 +173,7 @@ async def validate_diagnosis_endpoint(input_data: DiagnosisInput):
         return validation_result
 
     except Exception as e:
-        logger.error(f"Error processing diagnosis validation: {e}")
+        print(f"Error processing diagnosis validation: {e}")  # Replaced logger with print
         raise HTTPException(
             status_code=500,
             detail=f"Error processing diagnosis validation: {str(e)}"

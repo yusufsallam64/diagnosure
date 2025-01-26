@@ -12,19 +12,21 @@ from chromadb.utils import embedding_functions
 from tqdm import tqdm
 import hashlib
 import time
+import logging
 
 class DocumentStore:
-    def __init__(
-        self,
-        collection_name: str = "medical_documents",
-        embedding_model_name: str = "BAAI/bge-large-en-v1.5",
-        persist_directory: str = "./chroma_db",
-        max_seq_length: int = 768
-    ):
-        self.setup_logging()
+    def __init__(self, collection_name: str, embedding_model_name: str, 
+                 persist_directory: str, max_seq_length: int, 
+                 embedding_model: Optional[SentenceTransformer] = None):
+        self.collection_name = collection_name
+        self.embedding_model_name = embedding_model_name
+        self.persist_directory = persist_directory
+        self.max_seq_length = max_seq_length
+        self.embedding_model = embedding_model or SentenceTransformer(embedding_model_name)
+        self.setup_logging()  # Ensure logging is set up during initialization
         self.initialize_embedding_model(embedding_model_name, max_seq_length)
-        self.initialize_chromadb(collection_name, persist_directory, embedding_model_name)
-        
+        self.initialize_chromadb(collection_name, persist_directory, embedding_model_name)  # Initialize ChromaDB
+
     def setup_logging(self):
         """Configure detailed logging"""
         self.logger = logging.getLogger(__name__)
@@ -113,89 +115,104 @@ class DocumentStore:
         id_string = '||'.join(id_components)
         return hashlib.sha256(id_string.encode()).hexdigest()
 
-    async def add_documents(self, chunks: List[Dict[str, Any]]):
-        """Add document chunks with improved deduplication"""
-        existing_ids = set()
-        
-        # Get existing IDs only once per batch
-        if self.collection.count() > 0:
-            existing_ids = set(self.collection.get()["ids"])
-        
-        # Prepare batch data
-        texts = []
-        metadatas = []
-        ids = []
-        
-        for chunk in chunks:
-            # Extract content and clean it
-            content = chunk.get('content', '').strip()
-            if not content:
-                continue
+    async def get_similar_chunks(
+            self,
+            query: str,
+            top_k: int = 5,
+            min_similarity: float = 0.6,
+            query_embedding: Optional[Any] = None
+        ) -> List[Dict[str, Any]]:
+            """
+            Get similar document chunks using ChromaDB with optional pre-computed embeddings.
+            
+            Args:
+                query: The search query string
+                top_k: Maximum number of results to return
+                min_similarity: Minimum similarity threshold
+                query_embedding: Pre-computed query embedding (optional)
                 
-            # Generate ID first to check for duplicates
-            doc_id = self.generate_document_id(content, chunk.get('metadata', {}))
-            if doc_id in existing_ids:
-                continue
+            Returns:
+                List of dictionaries containing matched chunks with metadata and similarity scores
+            """
+            try:
+                # Generate embedding if not provided
+                if query_embedding is None:
+                    if self.embedding_model is None:
+                        raise ValueError("No embedding model available")
+                    query_embedding = self.embedding_model.encode(query)
                 
-            texts.append(content)
-            metadatas.append({
-                'section_type': chunk.get('section_type', ''),
-                'page_num': chunk.get('page_num', ''),
-                'chunk_id': chunk.get('chunk_id', ''),
-                'date': chunk.get('date', ''),
-                'timestamp': int(time.time()),
-                **{k: v for k, v in chunk.get('metadata', {}).items() if v is not None}
-            })
-            ids.append(doc_id)
-            existing_ids.add(doc_id)
-        
-        if texts:
+                # Convert embedding to list format required by ChromaDB
+                query_embedding_list = query_embedding.tolist()
+                
+                # Perform similarity search
+                results = self.collection.query(
+                    query_embeddings=[query_embedding_list],
+                    n_results=top_k,
+                    include=['metadatas', 'documents', 'distances']
+                )
+                
+                # Process results
+                processed_results = []
+                if results['ids'] and len(results['ids'][0]) > 0:
+                    for i in range(len(results['ids'][0])):
+                        # Convert distance to similarity score (ChromaDB returns distances)
+                        # For cosine distance, similarity = 1 - distance
+                        similarity = 1 - results['distances'][0][i]
+                        
+                        # Skip results below minimum similarity threshold
+                        if similarity < min_similarity:
+                            continue
+                        
+                        processed_results.append({
+                            'id': results['ids'][0][i],
+                            'content': results['documents'][0][i],
+                            'metadata': results['metadatas'][0][i],
+                            'similarity': float(similarity)  # Convert numpy float to Python float
+                        })
+                
+                # Sort by similarity score (highest first)
+                processed_results.sort(key=lambda x: x['similarity'], reverse=True)
+                
+                self.logger.debug(f"Found {len(processed_results)} similar chunks above threshold")
+                return processed_results
+                
+            except Exception as e:
+                self.logger.error(f"Error in get_similar_chunks: {str(e)}")
+                raise
+
+    async def add_documents(
+        self,
+        texts: List[str],
+        metadatas: List[Dict[str, Any]],
+        ids: Optional[List[str]] = None
+    ) -> None:
+        """Add new documents to the collection"""
+        try:
+            # Generate embeddings in batches
+            embeddings = []
+            batch_size = 32  # Adjust based on your memory constraints
+            
+            for i in range(0, len(texts), batch_size):
+                batch_texts = texts[i:i + batch_size]
+                batch_embeddings = self.embedding_model.encode(batch_texts)
+                embeddings.extend(batch_embeddings.tolist())
+            
+            # Add documents to ChromaDB
+            if ids is None:
+                ids = [str(i) for i in range(len(texts))]
+                
             self.collection.add(
                 documents=texts,
                 metadatas=metadatas,
-                ids=ids
+                ids=ids,
+                embeddings=embeddings
             )
-            self.logger.info(f"Added {len(texts)} new documents")
-
-    async def get_similar_chunks(
-        self,
-        query_text: str,
-        top_k: int = 5,
-        min_similarity: float = 0.3
-    ) -> List[Dict[str, Any]]:
-        """Enhanced similarity search with better query processing"""
-        query_text = self._preprocess_query(query_text)
-        
-        # Ensure collection has documents before querying
-        collection_count = self.collection.count()
-        if collection_count == 0:
-            self.logger.warning("Collection is empty, no results to return")
-            return []
             
-        # Adjust top_k to be within valid range
-        top_k = max(1, min(top_k, collection_count))
-        
-        results = self.collection.query(
-            query_texts=[query_text],
-            n_results=top_k,
-            include=['documents', 'metadatas', 'distances']
-        )
-        
-        filtered_chunks = []
-        for doc, meta, distance in zip(
-            results['documents'][0],
-            results['metadatas'][0],
-            results['distances'][0]
-        ):
-            similarity = 1 - (distance / 2)
-            if similarity >= min_similarity:
-                filtered_chunks.append({
-                    'content': doc,
-                    'metadata': meta,
-                    'similarity': similarity
-                })
-        
-        return sorted(filtered_chunks, key=lambda x: x['similarity'], reverse=True)
+            self.logger.info(f"Added {len(texts)} documents to collection {self.collection_name}")
+            
+        except Exception as e:
+            self.logger.logger.error(f"Error adding documents: {str(e)}")
+            raise
 
     def _preprocess_query(self, query: str) -> str:
         """Preprocess query with improved medical context"""
@@ -222,7 +239,10 @@ async def main():
     
     # Initialize document store
     doc_store = DocumentStore(
-        persist_directory=str(working_dir / "chroma_db")
+        collection_name="personal_injury_docs",  # Add collection name
+        embedding_model_name="all-MiniLM-L6-v2",  # Add embedding model name
+        persist_directory=str(working_dir / "chroma_db"),
+        max_seq_length=512  # Add max sequence length
     )
     
     # Process JSON file
