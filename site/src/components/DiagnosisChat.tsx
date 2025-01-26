@@ -14,8 +14,12 @@ interface ValidationResponse {
   risk_level: string;
   confidence_score: number;
 }
+interface DiagnosisChatProps {
+  prescreenId: string | null;
+  patientId: string;
+}
 
-const DiagnosisChat = (prescreenId: any) => {
+const DiagnosisChat = ({ prescreenId, patientId }: DiagnosisChatProps) => {
   const { data: session } = useSession();
   const router = useRouter()
   const [diagnosis, setDiagnosis] = useState('');
@@ -33,6 +37,17 @@ const DiagnosisChat = (prescreenId: any) => {
     setError(null);
 
     try {
+      // First fetch the pre-report
+      console.log(patientId)
+      const preReportResponse = await fetch(`/api/diagnosis-pre-report?userId=${patientId}&reportId=${prescreenId}`);
+
+      if (!preReportResponse.ok) {
+        throw new Error('Failed to fetch pre-report');
+      }
+
+      const preReportData = await preReportResponse.json();
+
+      // Then make the validation call with the pre-report data included
       const response = await fetch('http://localhost:8080/api/validate_diagnosis', {
         method: 'POST',
         headers: {
@@ -41,7 +56,7 @@ const DiagnosisChat = (prescreenId: any) => {
         body: JSON.stringify({
           user_id: session.user.id,
           doctor_diagnosis: diagnosis,
-          additional_notes: ''
+          additional_notes: JSON.stringify(preReportData.data) // Convert pre-report to string
         }),
       });
 
@@ -78,7 +93,7 @@ const DiagnosisChat = (prescreenId: any) => {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          user_id: session.user.id,
+          user_id: patientId,
           doctor_diagnosis: diagnosis,
           validation_data: validationData
         }),
@@ -92,7 +107,7 @@ const DiagnosisChat = (prescreenId: any) => {
 
       console.log('Diagnosis published successfully:', result);
       handleReset();
-      
+
       // Navigate back to doctor view
       router.push('/doctorView');
 

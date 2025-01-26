@@ -101,11 +101,11 @@ async def get_latest_prescreen(user_id: str) -> Dict[str, Any]:
 
 async def validate_diagnosis(
     diagnosis: str,
-    prescreen_data: Dict[str, Any]
+    prescreen_data: Dict[str, Any],
+    additional_notes: Optional[str] = None 
 ) -> ValidationResponse:
-    """Validate diagnosis against prescreen data using RAG"""
     try:
-        # Construct validation query
+        # Construct validation query with additional notes
         validation_query = f"""
         Given the following patient information and doctor's diagnosis, analyze for consistency 
         and potential concerns:
@@ -115,6 +115,7 @@ async def validate_diagnosis(
         Severity: {prescreen_data['severity']}
         Medical History: {prescreen_data['medical_history']}
         Vital Signs: {prescreen_data['vital_signs']}
+        Previous Pre-screen Report: {additional_notes}  
         
         Doctor's Diagnosis: {diagnosis}
 
@@ -159,15 +160,15 @@ async def validate_diagnosis(
 
 @app.post("/api/validate_diagnosis", response_model=ValidationResponse)
 async def validate_diagnosis_endpoint(input_data: DiagnosisInput):
-    """Endpoint to validate doctor's diagnosis"""
     try:
         # Get patient's prescreen data
         prescreen_data = await get_latest_prescreen(input_data.user_id)
-        
-        # Validate diagnosis
+        print(input_data.additional_notes)
+        # Validate diagnosis with additional notes
         validation_result = await validate_diagnosis(
             input_data.doctor_diagnosis,
-            prescreen_data
+            prescreen_data,
+            input_data.additional_notes  # Add this parameter
         )
         
         return validation_result

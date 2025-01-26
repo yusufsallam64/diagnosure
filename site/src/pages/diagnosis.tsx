@@ -277,7 +277,7 @@ const DiagnosisPage = () => {
       </div>
 
       <div className="lg:col-span-1">
-        <DiagnosisChat prescreenId={prescreenId} />
+        <DiagnosisChat prescreenId={prescreenId} patientId={patientId}/>
       </div>
     </div>
   );
