@@ -1,6 +1,6 @@
-import React, {useEffect, useState} from 'react';
+import React, { useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { FileText, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react';
+import { FileText, AlertCircle, ChevronDown, ChevronUp, UserCircle, Bot } from 'lucide-react';
 import DiagnosisChat from '@/components/DiagnosisChat';
 
 const Tabs = ({ children }: { children: React.ReactNode }) => {
@@ -20,13 +20,13 @@ interface ValidatedSegment {
   end: number;
 }
 
-const TabsTrigger = ({ 
-  value, 
-  active, 
-  disabled, 
-  onClick, 
-  children 
-}: { 
+const TabsTrigger = ({
+  value,
+  active,
+  disabled,
+  onClick,
+  children
+}: {
   value: string;
   active: boolean;
   disabled?: boolean;
@@ -35,15 +35,13 @@ const TabsTrigger = ({
 }) => {
   return (
     <button
-      className={`px-4 py-2 rounded-t-lg transition-colors ${
-        active 
-          ? 'bg-background-700 text-primary-500' 
-          : 'hover:bg-background-700/50'
-      } ${
-        disabled 
-          ? 'opacity-50 cursor-not-allowed' 
+      className={`px-4 py-2 rounded-t-lg transition-colors ${active
+        ? 'bg-background-700 text-primary-500'
+        : 'hover:bg-background-700/50'
+        } ${disabled
+          ? 'opacity-50 cursor-not-allowed'
           : 'cursor-pointer'
-      }`}
+        }`}
       onClick={onClick}
       disabled={disabled}
     >
@@ -55,7 +53,7 @@ const TabsTrigger = ({
 const PDFViewer = ({ patientId }: { patientId: string }) => {
   return (
     <div className="flex-1 p-4">
-      <iframe 
+      <iframe
         src={`data/${patientId}.pdf`}
         className="w-full h-full"
         style={{ minHeight: 'calc(100vh - 180px)' }}
@@ -65,10 +63,10 @@ const PDFViewer = ({ patientId }: { patientId: string }) => {
   );
 };
 
-const PreScreenDisplay = ({ 
-  prescreen, 
-  isLoading 
-}: { 
+const PreScreenDisplay = ({
+  prescreen,
+  isLoading
+}: {
   prescreen?: any;
   isLoading: boolean;
 }) => {
@@ -96,8 +94,10 @@ const PreScreenDisplay = ({
 
   const transcriptData = prescreen.validatedTranscript || prescreen.originalTranscript || [];
 
+  const [isConversationOpen, setIsConversationOpen] = useState(false);
+
   return (
-    <div className="flex-1 p-4 space-y-3 overflow-y-auto">
+    <div className="flex-1 p-4 space-y-1 overflow-y-auto">
       {/* Summary Section */}
       <div className="bg-background-700/50 p-4 rounded-lg">
         <h3 className="text-lg font-semibold mb-2">Summary</h3>
@@ -129,69 +129,65 @@ const PreScreenDisplay = ({
       )}
 
       {/* Issues Section */}
-      {prescreen.validationResult?.detectedIssues && (
+      {prescreen.validationResult?.detectedIssues?.length > 0 ? (
         <div className="bg-background-700/50 p-4 rounded-lg">
           <h3 className="text-lg font-semibold mb-2">Detected Issues</h3>
           <ul className="space-y-2">
             {prescreen.validationResult.detectedIssues.map((issue: string, index: number) => (
-              <li key={index} className="text-sm bg-background-700 p-2 rounded">
+              <li
+                key={index}
+                className="text-sm bg-background-700 p-2 rounded"
+              >
                 {issue}
               </li>
             ))}
           </ul>
         </div>
-      )}
-
-      {/* Model Responses Section */}
-      {prescreen.modelResponses && prescreen.modelResponses.length > 0 && (
-        <div className="bg-background-700/50 rounded-lg">
-          <button
-            onClick={() => setIsResponsesOpen(!isResponsesOpen)}
-            className="w-full p-4 flex items-center justify-between text-lg font-semibold hover:bg-background-700/70 rounded-lg transition-colors"
-          >
-            <span>Model Responses</span>
-            {isResponsesOpen ? (
-              <ChevronUp className="w-5 h-5" />
-            ) : (
-              <ChevronDown className="w-5 h-5" />
-            )}
-          </button>
-          
-          {isResponsesOpen && (
-            <div className="p-4 space-y-2 max-h-96 overflow-y-auto">
-              {prescreen.modelResponses.map((response: string, index: number) => (
-                <div key={index} className="text-sm bg-background-700 p-2 rounded">
-                  {response}
-                </div>
-              ))}
-            </div>
-          )}
+      ) : (
+        <div className="bg-background-700/50 p-4 rounded-lg">
+          <h3 className="text-lg font-semibold mb-2">Detected Issues</h3>
+          <p className="text-sm">No issues detected</p>
         </div>
       )}
 
-      {/* Collapsible Transcript Section */}
+      {/* Conversation Section */}
       <div className="bg-background-700/50 rounded-lg">
         <button
-          onClick={() => setIsTranscriptOpen(!isTranscriptOpen)}
+          onClick={() => setIsConversationOpen(!isConversationOpen)}
           className="w-full p-4 flex items-center justify-between text-lg font-semibold hover:bg-background-700/70 rounded-lg transition-colors"
         >
-          <span>Transcript</span>
-          {isTranscriptOpen ? (
+          <span>Conversation</span>
+          {isConversationOpen ? (
             <ChevronUp className="w-5 h-5" />
           ) : (
             <ChevronDown className="w-5 h-5" />
           )}
         </button>
-        
-        {isTranscriptOpen && (
-          <div className="p-4 space-y-2 max-h-96 overflow-y-auto">
+
+        {isConversationOpen && (
+          <div className="p-4 space-y-3 max-h-96 overflow-y-auto">
             {transcriptData.map((segment: ValidatedSegment, index: number) => (
-              <div key={index} className="bg-background-700 p-3 rounded">
-                <p className="text-sm">{segment.text}</p>
-                <p className="text-xs text-gray-500 mt-1">
-                  Time: {segment.start}s - {segment.end}s
-                </p>
-              </div>
+              <React.Fragment key={index}>
+                {/* Human Message */}
+                <div className="bg-background-700 p-3 rounded">
+                  <div className="flex items-center gap-2 mb-1">
+                    <UserCircle className="w-4 h-4" />
+                    <span className="text-xs font-bold">Human</span>
+                  </div>
+                  <p className="text-sm">{segment.text}</p>
+                </div>
+
+                {/* Model Response (if exists) */}
+                {prescreen.modelResponses?.[index] && (
+                  <div className="bg-background-800 p-3 rounded ml-4">
+                    <div className="flex items-center gap-2 mb-1">
+                      <Bot className="w-4 h-4" />
+                      <span className="text-xs font-medium">Assistant</span>
+                    </div>
+                    <p className="text-sm">{prescreen.modelResponses[index]}</p>
+                  </div>
+                )}
+              </React.Fragment>
             ))}
           </div>
         )}
@@ -212,14 +208,14 @@ const DiagnosisPage = () => {
   React.useEffect(() => {
     const fetchPrescreen = async () => {
       if (!prescreenId || !patientId) return;
-      
+
       setIsLoading(true);
       try {
         const response = await fetch(
           `/api/diagnosis-pre-report?userId=${patientId}&reportId=${prescreenId}`,
           { method: 'GET' }
         );
-    
+
         if (!response.ok) throw new Error('Failed to fetch prescreen');
         const { data } = await response.json();
         setPrescreen(data);
@@ -229,7 +225,7 @@ const DiagnosisPage = () => {
         setIsLoading(false);
       }
     };
-  
+
     fetchPrescreen();
   }, [prescreenId, patientId]);
 
@@ -249,7 +245,7 @@ const DiagnosisPage = () => {
       <div className="lg:col-span-2 bg-background-800 rounded-lg">
         <Tabs>
           <TabsList>
-            <TabsTrigger 
+            <TabsTrigger
               value="records"
               active={activeTab === 'records'}
               onClick={() => setActiveTab('records')}
@@ -259,7 +255,7 @@ const DiagnosisPage = () => {
                 Medical Records
               </div>
             </TabsTrigger>
-            <TabsTrigger 
+            <TabsTrigger
               value="prescreen"
               active={activeTab === 'prescreen'}
               onClick={() => setActiveTab('prescreen')}
@@ -270,18 +266,18 @@ const DiagnosisPage = () => {
               </div>
             </TabsTrigger>
           </TabsList>
-          
+
           {activeTab === 'records' ? (
             <PDFViewer patientId={patientId} />
           ) : (
-            <PreScreenDisplay 
-              prescreen={prescreen} 
+            <PreScreenDisplay
+              prescreen={prescreen}
               isLoading={isLoading}
             />
           )}
         </Tabs>
       </div>
-      
+
       <div className="lg:col-span-1">
         <DiagnosisChat prescreenId={prescreenId} />
       </div>
