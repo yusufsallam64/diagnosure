@@ -20,7 +20,17 @@ export const authOptions: AuthOptions = {
         signIn: "/auth/signin",
         newUser: '/dashboard',
     },
-    callbacks: {}
+    callbacks: {
+        session: async ({ session, user }) => {
+            return {
+                ...session,
+                user: {
+                    ...session.user,
+                    id: user.id
+                }
+            }
+        }
+    }
 }
 
 export default NextAuth(authOptions)
