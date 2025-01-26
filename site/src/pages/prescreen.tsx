@@ -1,3 +1,6 @@
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "@/pages/api/auth/[...nextauth]";
+import { GetServerSidePropsContext } from "next";
 import { AlertCircle, ArrowLeft, Mic, Square } from 'lucide-react';
 import LandingModel from '@/components/LandingModel';
 import { ModelResponsePanel } from '@/components/prescreen/ModelResponsePanel';
@@ -5,6 +8,8 @@ import { TranscriptPanel } from '@/components/prescreen/TranscriptPanel';
 import { RecordingButton } from '@/components/RecordingButton';
 import { ActiveTool, ModelResponse, RealtimeEvent, Tool, Transcript } from '@/lib/types';
 import React, { useState, useEffect, useRef } from 'react';
+import { useSession } from 'next-auth/react';
+import { redirect } from "next/navigation";
 
 const REALTIME_AI_PROMPT = `\
 You are a helpful, realtime AI assistant designed to gather patient information before a visit. \
@@ -36,7 +41,7 @@ const TOOLS: Tool[] = [
   }
 ];
 
-const Dashboard: React.FC = () => {
+const Prescreen: React.FC = () => {
   const [isRecording, setIsRecording] = useState<boolean>(false);
   const [realtimeTranscripts, setRealtimeTranscripts] = useState<Transcript[]>([]);
   const [modelResponses, setModelResponses] = useState<ModelResponse[]>([]);
@@ -387,7 +392,7 @@ const Dashboard: React.FC = () => {
       await peerConnection.setLocalDescription(offer);
 
       const baseUrl = "https://api.openai.com/v1/realtime";
-      const model = "gpt-4o-mini-realtime-preview";
+      const model = "gpt-4o-realtime-preview";
       const sdpResponse = await fetch(`${baseUrl}?model=${model}`, {
         method: "POST",
         body: offer.sdp,
@@ -651,4 +656,21 @@ const Dashboard: React.FC = () => {
   );
 };
 
-export default Dashboard;
+export async function getServerSideProps(context: GetServerSidePropsContext) {
+  const session = await getServerSession(context.req, context.res, authOptions);
+
+  if(!session) {
+    return {
+      redirect: {
+        destination: '/auth/signup',
+        permanent: false
+      }
+    };
+  }
+
+  return {
+    props: {}
+  }
+}
+
+export default Prescreen;
