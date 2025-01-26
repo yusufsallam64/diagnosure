@@ -1,7 +1,7 @@
 import React from 'react';
-import { Search, User, ChevronRight, Clock } from 'lucide-react';
+import { Search, User, ChevronRight, Clock, LogOut } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { useSession } from "next-auth/react";
+import { signOut, useSession } from "next-auth/react";
 import PrescreenModal from '@/components/PreScreenModal';
 import type { Patient } from '@/types/patient';
 import Image from 'next/image';
@@ -45,18 +45,29 @@ const DoctorView = () => {
    return (
       <div className="min-h-screen bg-background-900 text-text p-4 md:p-8">
          <div className="max-w-6xl mx-auto space-y-8">
-            <div className="flex items-center gap-4 mb-8">
-               <div className="w-12 h-12 rounded-full bg-primary-500 flex items-center justify-center">
-                  <User className="w-6 h-6 text-background-900" />
+            <div className="flex flex-row place-content-between">
+               <div className="flex items-center gap-4 mb-8">
+                  <div className="w-12 h-12 rounded-full bg-primary-500 flex items-center justify-center">
+                     <User className="w-6 h-6 text-background-900" />
+                  </div>
+                  <div>
+                     <h1 className="font-heading text-2xl md:text-3xl font-bold">
+                        Doctor's Dashboard
+                     </h1>
+                     <p className="text-text/80 font-body">
+                        Manage your patients
+                     </p>
+                  </div>
                </div>
-               <div>
-                  <h1 className="font-heading text-2xl md:text-3xl font-bold">
-                     Doctor's Dashboard
-                  </h1>
-                  <p className="text-text/80 font-body">
-                     Manage your patients
-                  </p>
-               </div>
+
+               <button
+                  onClick={() => signOut({ callbackUrl: '/' })}
+                  className="flex items-center gap-2 px-4 py-2 m-auto mr-0 rounded-lg bg-background-800 hover:bg-background-700 transition-colors"
+                  aria-label="Sign out"
+               >
+                  <LogOut className="w-5 h-5" />
+                  <span>Sign out</span>
+               </button>
             </div>
 
             <div className="relative">
