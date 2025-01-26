@@ -1,16 +1,16 @@
+// diagnosis.tsx
 import React from 'react';
 import { useSearchParams } from 'next/navigation';
-import { FileText, AlertCircle, Send } from 'lucide-react';
+import { FileText, AlertCircle } from 'lucide-react';
 import DiagnosisChat from '@/components/DiagnosisChat';
 
-// Custom Tab Components
 const Tabs = ({ children }: { children: React.ReactNode }) => {
-  return <div className="w-full">{children}</div>;
+  return <div className="h-full flex flex-col">{children}</div>;
 };
 
 const TabsList = ({ children }: { children: React.ReactNode }) => {
   return (
-    <div className="flex space-x-2 border-b border-background-700">
+    <div className="flex space-x-2 pt-3 pl-3 border-b border-background-700">
       {children}
     </div>
   );
@@ -48,26 +48,23 @@ const TabsTrigger = ({
   );
 };
 
-
-// PDF Viewer Component
 const PDFViewer = ({ patientId }: { patientId: string }) => {
   return (
-    <div className="w-full h-full min-h-[600px] bg-background-800 rounded-lg p-4">
+    <div className="flex-1 p-4">
       <iframe 
         src={`data/${patientId}.pdf`}
-        className="w-full h-full min-h-[600px]"
-        style={{ width: '100%', height: '100%' }}
+        className="w-full h-full"
+        style={{ minHeight: 'calc(100vh - 180px)' }}
         title="Medical Records"
       />
     </div>
   );
 };
 
-// PreScreen Display Component
 const PreScreenDisplay = ({ prescreen }: { prescreen?: any }) => {
   if (!prescreen) {
     return (
-      <div className="flex items-center justify-center h-full min-h-[600px] bg-background-800 rounded-lg p-4">
+      <div className="flex-1 flex items-center justify-center p-4">
         <div className="text-center text-text/60">
           <AlertCircle className="mx-auto mb-4 w-12 h-12" />
           <p>No prescreen data available</p>
@@ -77,7 +74,7 @@ const PreScreenDisplay = ({ prescreen }: { prescreen?: any }) => {
   }
 
   return (
-    <div className="w-full h-full min-h-[600px] bg-background-800 rounded-lg p-4">
+    <div className="flex-1 p-4">
       <div className="space-y-4">
         <p>Date: {prescreen.date}</p>
         <p>Severity: {prescreen.severity}</p>
@@ -94,13 +91,11 @@ const PreScreenDisplay = ({ prescreen }: { prescreen?: any }) => {
   );
 };
 
-// Main Diagnosis Page
 const DiagnosisPage = () => {
   const searchParams = useSearchParams();
   const patientId = searchParams.get('id');
   const [activeTab, setActiveTab] = React.useState('records');
 
-  // This would normally be fetched based on patientId
   const mockPrescreen = {
     date: '2024-01-20',
     severity: 'Moderate',
@@ -119,47 +114,43 @@ const DiagnosisPage = () => {
   }
 
   return (
-    <div className="container mx-auto p-2 flex flex-col gap-4 h-screen">      
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 flex-1">
-        <div className="lg:col-span-2 h-[95vh]">
-          <Tabs>
-            <TabsList>
-              <TabsTrigger 
-                value="records"
-                active={activeTab === 'records'}
-                onClick={() => setActiveTab('records')}
-              >
-                <div className="flex items-center gap-2">
-                  <FileText className="w-4 h-4" />
-                  Medical Records
-                </div>
-              </TabsTrigger>
-              <TabsTrigger 
-                value="prescreen"
-                active={activeTab === 'prescreen'}
-                disabled={!mockPrescreen}
-                onClick={() => setActiveTab('prescreen')}
-              >
-                <div className="flex items-center gap-2">
-                  <AlertCircle className="w-4 h-4" />
-                  Pre-Screen
-                </div>
-              </TabsTrigger>
-            </TabsList>
-            
-            <div className="mt-4">
-              {activeTab === 'records' ? (
-                <PDFViewer patientId={patientId} />
-              ) : (
-                <PreScreenDisplay prescreen={mockPrescreen} />
-              )}
-            </div>
-          </Tabs>
-        </div>
-        
-        <div className="lg:col-span-1 ">
-          <DiagnosisChat />
-        </div>
+    <div className="container mx-auto p-4 grid grid-cols-1 lg:grid-cols-3 gap-4 h-screen">
+      <div className="lg:col-span-2 bg-background-800 rounded-lg">
+        <Tabs>
+          <TabsList>
+            <TabsTrigger 
+              value="records"
+              active={activeTab === 'records'}
+              onClick={() => setActiveTab('records')}
+            >
+              <div className="flex items-center gap-2">
+                <FileText className="w-4 h-4" />
+                Medical Records
+              </div>
+            </TabsTrigger>
+            <TabsTrigger 
+              value="prescreen"
+              active={activeTab === 'prescreen'}
+              disabled={!mockPrescreen}
+              onClick={() => setActiveTab('prescreen')}
+            >
+              <div className="flex items-center gap-2">
+                <AlertCircle className="w-4 h-4" />
+                Pre-Screen
+              </div>
+            </TabsTrigger>
+          </TabsList>
+          
+          {activeTab === 'records' ? (
+            <PDFViewer patientId={patientId} />
+          ) : (
+            <PreScreenDisplay prescreen={mockPrescreen} />
+          )}
+        </Tabs>
+      </div>
+      
+      <div className="lg:col-span-1">
+        <DiagnosisChat />
       </div>
     </div>
   );
