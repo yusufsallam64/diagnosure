@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Send, RotateCcw, Share2 } from 'lucide-react';
 import Card from './ui/card';
+import { useSession } from "next-auth/react";
 
 interface ValidationResponse {
   validation_result: {
@@ -14,18 +15,21 @@ interface ValidationResponse {
 }
 
 const DiagnosisChat = (prescreenId: any) => {
+  const { data: session } = useSession();
   const [diagnosis, setDiagnosis] = useState('');
   const [previousDiagnosis, setPreviousDiagnosis] = useState('');
   const [validationData, setValidationData] = useState<ValidationResponse | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isPublishing, setIsPublishing] = useState(false);
+
 
   const handleSubmit = async () => {
-    if (!diagnosis.trim()) return;
-    
+    if (!diagnosis.trim() || !session?.user?.id) return;
+
     setIsAnalyzing(true);
     setError(null);
-    
+
     try {
       const response = await fetch('http://localhost:8080/api/validate_diagnosis', {
         method: 'POST',
@@ -33,7 +37,7 @@ const DiagnosisChat = (prescreenId: any) => {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          user_id: 'current-user',
+          user_id: session.user.id,
           doctor_diagnosis: diagnosis,
           additional_notes: ''
         }),
@@ -59,8 +63,41 @@ const DiagnosisChat = (prescreenId: any) => {
     setError(null);
   };
 
-  const handlePublish = () => {
-    console.log('Publishing diagnosis and validation');
+  const handlePublish = async () => {
+    if (!validationData || !session?.user?.id) return;
+
+    setIsPublishing(true);
+    setError(null);
+
+    try {
+      const response = await fetch('/api/publish-diagnosis', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          user_id: session.user.id,
+          doctor_diagnosis: diagnosis,
+          validation_data: validationData
+        }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to publish diagnosis');
+      }
+
+      // Handle successful publication
+      console.log('Diagnosis published successfully:', result);
+
+      // Reset the form
+      handleReset();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to publish diagnosis');
+    } finally {
+      setIsPublishing(false);
+    }
   };
 
   const renderAnalysis = () => {
@@ -73,7 +110,7 @@ const DiagnosisChat = (prescreenId: any) => {
           <div>
             <p className="text-black whitespace-pre-wrap">{validationData.validation_result.analysis}</p>
           </div>
-          
+
           <div>
             <h4 className="font-medium text-black mb-2">Suggestions:</h4>
             <ul className="list-disc pl-5 space-y-1">
@@ -82,7 +119,7 @@ const DiagnosisChat = (prescreenId: any) => {
               ))}
             </ul>
           </div>
-          
+
           <div className="flex gap-4">
             <div>
               <span className="font-medium">Risk Level: </span>
@@ -148,11 +185,11 @@ const DiagnosisChat = (prescreenId: any) => {
                 <h3 className="text-lg font-semibold text-black mb-2">Diagnosis</h3>
                 <p className="text-black whitespace-pre-wrap">{diagnosis}</p>
               </div>
-              
+
               <div className="w-full border-t border-background-600 my-4" />
-              
+
               {renderAnalysis()}
-              
+
               <div className="pt-4 mt-auto border-t border-background-600 flex gap-3">
                 <button
                   onClick={handleReset}
@@ -165,12 +202,13 @@ const DiagnosisChat = (prescreenId: any) => {
                 </button>
                 <button
                   onClick={handlePublish}
+                  disabled={isPublishing}
                   className="flex items-center gap-2 px-4 py-2 rounded-lg
-                           bg-primary-500 hover:bg-primary-600 text-white
-                           transition-colors duration-200"
+             bg-primary-500 hover:bg-primary-600 text-white
+             transition-colors duration-200 disabled:opacity-50"
                 >
                   <Share2 className="w-4 h-4" />
-                  <span>Publish Diagnosis</span>
+                  <span>{isPublishing ? 'Publishing...' : 'Publish Diagnosis'}</span>
                 </button>
               </div>
             </div>
