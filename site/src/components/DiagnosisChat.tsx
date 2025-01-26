@@ -14,10 +14,30 @@ interface ValidationResponse {
   risk_level: string;
   confidence_score: number;
 }
+
 interface DiagnosisChatProps {
   prescreenId: string | null;
   patientId: string;
 }
+
+// Function to process markdown-like syntax
+const processMarkdown = (text: string): string => {
+  if (!text) return '';
+  
+  // Replace ### headers with styled div
+  text = text.replace(/###\s(.*?)(?=\n|$)/g, '<h3 class="text-lg font-semibold mt-4 mb-2">$1</h3>');
+  
+  // Replace ** bold ** with styled span
+  text = text.replace(/\*\*(.*?)\*\*/g, '<span class="font-bold">$1</span>');
+  
+  // Replace bullet points
+  text = text.replace(/^\s*\-\s/gm, '• ');
+  
+  // Split into paragraphs and wrap each in a div
+  return text.split('\n\n').map((paragraph, index) => 
+    `<div class="mb-3" key="${index}">${paragraph}</div>`
+  ).join('');
+};
 
 const DiagnosisChat = ({ prescreenId, patientId }: DiagnosisChatProps) => {
   const { data: session } = useSession();
@@ -29,7 +49,6 @@ const DiagnosisChat = ({ prescreenId, patientId }: DiagnosisChatProps) => {
   const [error, setError] = useState<string | null>(null);
   const [isPublishing, setIsPublishing] = useState(false);
 
-
   const handleSubmit = async () => {
     if (!diagnosis.trim() || !session?.user?.id) return;
 
@@ -38,7 +57,6 @@ const DiagnosisChat = ({ prescreenId, patientId }: DiagnosisChatProps) => {
 
     try {
       // First fetch the pre-report
-      console.log(patientId)
       const preReportResponse = await fetch(`/api/diagnosis-pre-report?userId=${patientId}&reportId=${prescreenId}`);
 
       if (!preReportResponse.ok) {
@@ -56,7 +74,7 @@ const DiagnosisChat = ({ prescreenId, patientId }: DiagnosisChatProps) => {
         body: JSON.stringify({
           user_id: session.user.id,
           doctor_diagnosis: diagnosis,
-          additional_notes: JSON.stringify(preReportData.data) // Convert pre-report to string
+          additional_notes: JSON.stringify(preReportData.data)
         }),
       });
 
@@ -74,9 +92,9 @@ const DiagnosisChat = ({ prescreenId, patientId }: DiagnosisChatProps) => {
   };
 
   const handleReset = () => {
-    setPreviousDiagnosis(diagnosis); // Save current diagnosis before reset
+    setPreviousDiagnosis(diagnosis);
     setValidationData(null);
-    setDiagnosis(''); // Clear current diagnosis
+    setDiagnosis('');
     setError(null);
   };
 
@@ -108,7 +126,6 @@ const DiagnosisChat = ({ prescreenId, patientId }: DiagnosisChatProps) => {
       console.log('Diagnosis published successfully:', result);
       handleReset();
 
-      // Navigate back to doctor view
       router.push('/doctorView');
 
     } catch (err) {
@@ -118,7 +135,6 @@ const DiagnosisChat = ({ prescreenId, patientId }: DiagnosisChatProps) => {
     }
   };
 
-
   const renderAnalysis = () => {
     if (!validationData) return null;
 
@@ -126,18 +142,46 @@ const DiagnosisChat = ({ prescreenId, patientId }: DiagnosisChatProps) => {
       <div className="flex-1 flex flex-col min-h-0">
         <h3 className="text-lg font-semibold text-black mb-2">Validation Analysis</h3>
         <div className="space-y-4 overflow-y-auto flex-1 pr-2">
-          <div>
-            <p className="text-black whitespace-pre-wrap">{validationData.validation_result.analysis}</p>
+          <div className="prose prose-invert max-w-none">
+            <div
+              dangerouslySetInnerHTML={{
+                __html: processMarkdown(validationData.validation_result.analysis)
+              }}
+              className="text-black whitespace-pre-wrap"
+            />
           </div>
 
           <div>
             <h4 className="font-medium text-black mb-2">Suggestions:</h4>
-            <ul className="list-disc pl-5 space-y-1">
+            <div className="space-y-2">
               {validationData.suggestions.map((suggestion, index) => (
-                <li key={index} className="text-black">{suggestion}</li>
+                <div 
+                  key={index}
+                  dangerouslySetInnerHTML={{
+                    __html: processMarkdown(suggestion)
+                  }}
+                  className="p-3 bg-background-800 rounded-md text-black"
+                />
               ))}
-            </ul>
+            </div>
           </div>
+
+          {validationData.validation_result.discrepancies.length > 0 && (
+            <div>
+              <h4 className="font-medium text-black mb-2">Discrepancies:</h4>
+              <ul className="list-disc pl-4 space-y-1">
+                {validationData.validation_result.discrepancies.map((discrepancy, index) => (
+                  <li 
+                    key={index}
+                    dangerouslySetInnerHTML={{
+                      __html: processMarkdown(discrepancy)
+                    }}
+                    className="text-black"
+                  />
+                ))}
+              </ul>
+            </div>
+          )}
 
           <div className="flex gap-4">
             <div>
@@ -162,20 +206,25 @@ const DiagnosisChat = ({ prescreenId, patientId }: DiagnosisChatProps) => {
 
   return (
     <Card className="h-full">
-      <div className="p-4 h-full flex flex-col"> {/* Added flex-col */}
+      <div className="p-4 h-full flex flex-col">
         {!validationData ? (
           // Input View
           <div className="h-full flex flex-col space-y-4">
             {previousDiagnosis && (
               <div className="p-4 rounded-lg bg-background-900 border border-gray-200">
                 <h4 className="text-sm font-medium text-gray-600 mb-2">Previous Diagnosis</h4>
-                <p className="text-sm text-gray-800">{previousDiagnosis}</p>
+                <div
+                  dangerouslySetInnerHTML={{
+                    __html: processMarkdown(previousDiagnosis)
+                  }}
+                  className="text-sm text-gray-800"
+                />
               </div>
             )}
             <textarea
               value={diagnosis}
               onChange={(e) => setDiagnosis(e.target.value)}
-              placeholder="Enter detailed patient symptoms, medical history, and observations..."
+              placeholder="Enter detailed patient symptoms, medical history, and observations.."
               className="flex-1 p-4 rounded-lg bg-background-700 text-black 
                        placeholder-gray-600 border border-background-600 
                        focus:border-primary-500 focus:ring-1 focus:ring-primary-500 
@@ -202,7 +251,12 @@ const DiagnosisChat = ({ prescreenId, patientId }: DiagnosisChatProps) => {
                           flex flex-col min-h-0 max-h-screen">
               <div className="mb-6">
                 <h3 className="text-lg font-semibold text-black mb-2">Diagnosis</h3>
-                <p className="text-black whitespace-pre-wrap">{diagnosis}</p>
+                <div
+                  dangerouslySetInnerHTML={{
+                    __html: processMarkdown(diagnosis)
+                  }}
+                  className="text-black whitespace-pre-wrap"
+                />
               </div>
 
               <div className="w-full border-t border-background-600 my-4" />
@@ -223,8 +277,8 @@ const DiagnosisChat = ({ prescreenId, patientId }: DiagnosisChatProps) => {
                   onClick={handlePublish}
                   disabled={isPublishing}
                   className="flex items-center gap-2 px-4 py-2 rounded-lg
-             bg-primary-500 hover:bg-primary-600 text-white
-             transition-colors duration-200 disabled:opacity-50"
+                           bg-primary-500 hover:bg-primary-600 text-white
+                           transition-colors duration-200 disabled:opacity-50"
                 >
                   <Share2 className="w-4 h-4" />
                   <span>{isPublishing ? 'Publishing...' : 'Publish Diagnosis'}</span>

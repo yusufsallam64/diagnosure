@@ -127,7 +127,7 @@ async def validate_diagnosis(
         5. Recommended additional specialist consultations if needed
         """
 
-        # Get RAG results
+        # Get RAG results 
         results = await rag_engine.search(validation_query)
         context = rag_engine.format_context(results)
         
