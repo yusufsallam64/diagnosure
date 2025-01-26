@@ -72,7 +72,7 @@ const PastPreScreens = () => {
         ...(endDate && { endDate: endDate.toISOString() })
       });
 
-      const response = await fetch(`/api/fetch-pre-reports?${queryParams}`);
+      const response = await fetch(`api/fetch-pre-reports?${queryParams}`);
       if (!response.ok) throw new Error('Failed to fetch reports');
       
       const data = await response.json();

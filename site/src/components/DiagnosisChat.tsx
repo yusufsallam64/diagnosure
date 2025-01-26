@@ -13,7 +13,7 @@ interface ValidationResponse {
   confidence_score: number;
 }
 
-const DiagnosisChat = () => {
+const DiagnosisChat = (prescreenId:any) => {
   const [diagnosis, setDiagnosis] = useState('');
   const [validationData, setValidationData] = useState<ValidationResponse | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);

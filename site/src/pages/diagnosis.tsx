@@ -1,4 +1,3 @@
-// diagnosis.tsx
 import React from 'react';
 import { useSearchParams } from 'next/navigation';
 import { FileText, AlertCircle } from 'lucide-react';
@@ -61,7 +60,21 @@ const PDFViewer = ({ patientId }: { patientId: string }) => {
   );
 };
 
-const PreScreenDisplay = ({ prescreen }: { prescreen?: any }) => {
+const PreScreenDisplay = ({ 
+  prescreen, 
+  isLoading 
+}: { 
+  prescreen?: any;
+  isLoading: boolean;
+}) => {
+  if (isLoading) {
+    return (
+      <div className="flex-1 flex items-center justify-center p-4">
+        <span className="loading loading-spinner loading-lg" />
+      </div>
+    );
+  }
+
   if (!prescreen) {
     return (
       <div className="flex-1 flex items-center justify-center p-4">
@@ -76,7 +89,7 @@ const PreScreenDisplay = ({ prescreen }: { prescreen?: any }) => {
   return (
     <div className="flex-1 p-4">
       <div className="space-y-4">
-        <p>Date: {prescreen.date}</p>
+        <p>Date: {new Date(prescreen.timestamp).toLocaleDateString()}</p>
         <p>Severity: {prescreen.severity}</p>
         <div>
           <h4 className="mb-2">Symptoms:</h4>
@@ -86,6 +99,12 @@ const PreScreenDisplay = ({ prescreen }: { prescreen?: any }) => {
             ))}
           </ul>
         </div>
+        {prescreen.notes && (
+          <div>
+            <h4 className="mb-2">Notes:</h4>
+            <p>{prescreen.notes}</p>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -94,13 +113,30 @@ const PreScreenDisplay = ({ prescreen }: { prescreen?: any }) => {
 const DiagnosisPage = () => {
   const searchParams = useSearchParams();
   const patientId = searchParams.get('id');
-  const [activeTab, setActiveTab] = React.useState('records');
+  const prescreenId = searchParams.get('prescreenId');
+  const [activeTab, setActiveTab] = React.useState(prescreenId ? 'prescreen' : 'records');
+  const [prescreen, setPrescreen] = React.useState<any>(null);
+  const [isLoading, setIsLoading] = React.useState(false);
 
-  const mockPrescreen = {
-    date: '2024-01-20',
-    severity: 'Moderate',
-    symptoms: ['Persistent cough', 'Fatigue', 'Mild fever']
-  };
+  React.useEffect(() => {
+    const fetchPrescreen = async () => {
+      if (!prescreenId) return;
+      
+      setIsLoading(true);
+      try {
+        const response = await fetch(`/api/prescreens/${prescreenId}/`);
+        if (!response.ok) throw new Error('Failed to fetch prescreen');
+        const data = await response.json();
+        setPrescreen(data);
+      } catch (error) {
+        console.error('Error fetching prescreen:', error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchPrescreen();
+  }, [prescreenId]);
 
   if (!patientId) {
     return (
@@ -131,7 +167,6 @@ const DiagnosisPage = () => {
             <TabsTrigger 
               value="prescreen"
               active={activeTab === 'prescreen'}
-              disabled={!mockPrescreen}
               onClick={() => setActiveTab('prescreen')}
             >
               <div className="flex items-center gap-2">
@@ -144,13 +179,16 @@ const DiagnosisPage = () => {
           {activeTab === 'records' ? (
             <PDFViewer patientId={patientId} />
           ) : (
-            <PreScreenDisplay prescreen={mockPrescreen} />
+            <PreScreenDisplay 
+              prescreen={prescreen} 
+              isLoading={isLoading}
+            />
           )}
         </Tabs>
       </div>
       
       <div className="lg:col-span-1">
-        <DiagnosisChat />
+        <DiagnosisChat prescreenId={prescreenId} />
       </div>
     </div>
   );

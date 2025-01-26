@@ -2,7 +2,7 @@ import React from 'react';
 import { Search, User, ChevronRight, Clock } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useSession } from "next-auth/react";
-import PatientModal from '@/components/PreScreenModal';
+import PrescreenModal from '@/components/PreScreenModal';
 import type { Patient } from '@/types/patient';
 import Image from 'next/image';
 
@@ -152,7 +152,7 @@ const DoctorView = () => {
          </div>
 
          {selectedPatient && (
-            <PatientModal
+            <PrescreenModal
                patientId={selectedPatient._id}
                patientName={selectedPatient.name}
                onClose={() => setSelectedPatient(null)}
