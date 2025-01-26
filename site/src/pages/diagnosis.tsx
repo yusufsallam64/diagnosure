@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { FileText, AlertCircle, ChevronDown, ChevronUp, UserCircle, Bot } from 'lucide-react';
+import { FileText, AlertCircle, ChevronDown, ChevronUp, UserCircle, Bot, ArrowLeft } from 'lucide-react';
 import DiagnosisChat from '@/components/DiagnosisChat';
 
 const Tabs = ({ children }: { children: React.ReactNode }) => {
@@ -239,6 +239,17 @@ const DiagnosisPage = () => {
   }
 
   return (
+    <>
+    <div className="flex flex-row items-center m-8 my-4 mb-0 mr-auto place-content-start">
+      <button
+        onClick={() => window.history.back()}
+        aria-label="Return to previous page"
+        className="flex items-center gap-3 text-lg bg-background-800 hover:bg-primary-600 transition-colors hover:text-primary-950 px-6 py-1 rounded-xl focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-primary"
+      >
+        <ArrowLeft className="w-6 h-6" aria-hidden="true" />
+        <span className="font-medium">Back</span>
+      </button>
+    </div>
     <div className="container mx-auto p-4 grid grid-cols-1 lg:grid-cols-3 gap-4 h-screen">
       <div className="lg:col-span-2 bg-background-800 rounded-lg">
         <Tabs>
@@ -280,6 +291,7 @@ const DiagnosisPage = () => {
         <DiagnosisChat prescreenId={prescreenId} patientId={patientId}/>
       </div>
     </div>
+    </>
   );
 };
 
