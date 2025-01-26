@@ -16,7 +16,7 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler('logs/query.log')
+        # logging.FileHandler('logs/query.log')
     ]
 )
 logger = logging.getLogger(__name__)
@@ -108,7 +108,7 @@ Please provide a clear and concise answer based solely on the information in the
                 model=model,
                 messages=messages,
                 temperature=temperature,
-                max_tokens=500
+                max_tokens=3000
             )
             
             return response.choices[0].message.content
@@ -134,13 +134,20 @@ Please provide a clear and concise answer based solely on the information in the
         print(answer)
         print("="*80)
 
+
 async def main():
     parser = argparse.ArgumentParser(description='RAG Query System for Medical Documents')
-    parser.add_argument('query', type=str, help='Search query')
+    
+    parser.add_argument(
+        '--query',
+        type=str,
+        help='Query string to search for'
+    )
+    
     parser.add_argument(
         '--store-path',
         type=str,
-        default='./rag_working_dir/chroma_db',
+        default='./rag/rag_working_dir/chroma_db',
         help='Path to document store'
     )
     parser.add_argument(
@@ -177,43 +184,96 @@ async def main():
         default=0.7,
         help='Temperature for GPT response'
     )
+    parser.add_argument(
+        '--run-sample-queries',
+        action='store_true',
+        help='Run a predefined set of sample queries'
+    )
     args = parser.parse_args()
 
     try:
         # Initialize RAG engine
         engine = RAGQueryEngine(args.store_path)
         await engine.initialize()
-        
-        # Get relevant documents
-        results = await engine.search(
-            args.query,
-            top_k=args.top_k,
-            min_similarity=args.min_similarity,
-            section_filter=args.section
-        )
-        
-        # Format context from results
-        context = engine.format_context(results)
-        
-        # Get GPT answer
-        answer = await engine.get_answer(
-            args.query,
-            context,
-            model=args.model,
-            temperature=args.temperature
-        )
-        
-        # Display results
-        engine.display_results(
-            args.query,
-            context,
-            answer,
-            show_context=args.show_context
-        )
+
+        if args.run_sample_queries:
+            # Define sample queries
+            sample_queries = [
+                "What are the key findings from the imaging studies of the patient's cervical spine and brain?",
+                "Summarize the patient's clinical history and presenting symptoms.",
+                "What were the findings from the cervical spine MRI without contrast?",
+                "Are there any abnormalities in the brain imaging studies?",
+                "Is there any evidence of central canal stenosis or neural foraminal narrowing in the cervical spine?",
+                "What are the patient's primary complaints and symptoms?",
+                "What is the clinical history of the patient regarding left-sided paresthesias and right-sided numbness?",
+                "Has the patient been evaluated for stroke or cervical radiculopathy?",
+                "What is the current diagnosis for the patient's condition?",
+                "What treatment plans have been recommended for the patient?",
+                "Is there any evidence of conversion disorder, and how is it being managed?",
+                "What were the results of the neurological evaluation for the patient?",
+                "Has the patient been assessed for psychiatric conditions such as depression or anxiety?",
+                "What is the psychiatric review of symptoms for the patient?",
+                "What are the key impressions from the imaging and clinical evaluations?",
+                "What are the recommendations for ongoing care and follow-up?",
+                "Are there any specific precautions or assistive measures recommended for the patient?",
+                "What does the imaging section reveal about the patient's cervical spine and brain?",
+                "What information is available in the patient_info section regarding the patient's history and symptoms?",
+                "What treatments have been documented in the treatment section?",
+                "What are the discharge instructions for the patient?",
+                "What follow-up care or outpatient services are recommended?",
+                "Are there any specific medications or therapies prescribed upon discharge?"
+            ]
+
+            # Run each sample query
+            for query in sample_queries:
+                print(f"\nRunning query: {query}")
+                results = await engine.search(
+                    query,
+                    top_k=args.top_k,
+                    min_similarity=args.min_similarity,
+                    section_filter=args.section
+                )
+                context = engine.format_context(results)
+                answer = await engine.get_answer(
+                    query,
+                    context,
+                    model=args.model,
+                    temperature=args.temperature
+                )
+                engine.display_results(
+                    query,
+                    context,
+                    answer,
+                    show_context=args.show_context
+                )
+        else:
+            # Run a single query provided by the user
+            if not args.query:
+                raise ValueError("Please provide a query or use --run-sample-queries to run predefined queries.")
+            
+            results = await engine.search(
+                args.query,
+                top_k=args.top_k,
+                min_similarity=args.min_similarity,
+                section_filter=args.section
+            )
+            context = engine.format_context(results)
+            answer = await engine.get_answer(
+                args.query,
+                context,
+                model=args.model,
+                temperature=args.temperature
+            )
+            engine.display_results(
+                args.query,
+                context,
+                answer,
+                show_context=args.show_context
+            )
         
     except Exception as e:
         logger.error(f"Error during RAG query execution: {e}")
         raise
-
+    
 if __name__ == "__main__":
     asyncio.run(main())

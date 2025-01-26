@@ -18,7 +18,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 class ParallelMedicalDocumentPipeline:
-    """Enhanced document processing pipeline with parallel PDF processing"""
+    """Orchestrates the complete document processing pipeline with watermark removal and parallel processing"""
     
     def __init__(self, 
                  data_dir: str = 'data',
@@ -46,12 +46,12 @@ class ParallelMedicalDocumentPipeline:
         self.chunker = MedicalDocumentChunker(max_chunk_size=chunk_size)
 
     def process_document(self, pdf_path: Path) -> Dict:
-        """Process a single document with enhanced error handling"""
+        """Process a single document with watermark removal and enhanced error handling"""
         logger.info(f"Starting processing of {pdf_path.name}")
         document_data = None
         
         try:
-            # Step 1: Parallel OCR Processing
+            # Step 1: Parallel OCR Processing with watermark removal
             sections = self.doc_processor.process_pdf(str(pdf_path))
             logger.info(f"Found {len(sections)} sections in {pdf_path.name}")
             

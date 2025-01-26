@@ -13,237 +13,231 @@ from tqdm import tqdm
 import hashlib
 import time
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler('logs/rag.log')
-    ]
-)
-logger = logging.getLogger(__name__)
-
 class DocumentStore:
-    """
-    A simple document storage and embedding system with ChromaDB backend.
-    Focused on embedding and storing documents with metadata.
-    """
     def __init__(
         self,
         collection_name: str = "medical_documents",
         embedding_model_name: str = "BAAI/bge-large-en-v1.5",
-        persist_directory: str = "./chroma_db"
+        persist_directory: str = "./chroma_db",
+        max_seq_length: int = 768
     ):
-        self.collection_name = collection_name
-        self.persist_directory = persist_directory
+        self.setup_logging()
+        self.initialize_embedding_model(embedding_model_name, max_seq_length)
+        self.initialize_chromadb(collection_name, persist_directory, embedding_model_name)
         
-        # Initialize embedding model with device detection
-        logger.info(f"Initializing embedding model: {embedding_model_name}")
+    def setup_logging(self):
+        """Configure detailed logging"""
+        self.logger = logging.getLogger(__name__)
+        if not self.logger.handlers:
+            handler = logging.StreamHandler()
+            handler.setFormatter(
+                logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s')
+            )
+            self.logger.addHandler(handler)
+            self.logger.setLevel(logging.DEBUG)
+
+    def initialize_embedding_model(self, model_name: str, max_seq_length: int):
+        """Initialize the embedding model with proper device detection"""
+        self.logger.info(f"Initializing embedding model: {model_name}")
         self.device = 'mps' if torch.backends.mps.is_available() else 'cuda' if torch.cuda.is_available() else 'cpu'
-        logger.info(f"Using device: {self.device}")
+        self.logger.info(f"Using device: {self.device}")
         
-        self.embedding_model = SentenceTransformer(embedding_model_name)
+        self.embedding_model = SentenceTransformer(model_name)
         self.embedding_model.to(self.device)
-        self.embedding_model.max_seq_length = 512
-        
-        # Initialize ChromaDB
-        logger.info("Initializing ChromaDB")
+        self.embedding_model.max_seq_length = max_seq_length
+        self.logger.info(f"Set max sequence length to {max_seq_length}")
+
+    def initialize_chromadb(self, collection_name: str, persist_directory: str, embedding_model_name: str):
+        """Initialize ChromaDB with optimized settings"""
+        self.logger.info("Initializing ChromaDB")
         self.chroma_client = chromadb.PersistentClient(
             path=persist_directory,
             settings=Settings(
                 anonymized_telemetry=False,
-                allow_reset=True
+                allow_reset=True,
+                is_persistent=True
             )
         )
         
-        # Create or get collection
         self.collection = self.chroma_client.get_or_create_collection(
             name=collection_name,
             embedding_function=embedding_functions.SentenceTransformerEmbeddingFunction(
                 model_name=embedding_model_name,
                 device=self.device
             ),
-            metadata={"hnsw:space": "cosine"}
+            metadata={"hnsw:space": "cosine", "hnsw:construction_ef": 100}
         )
+
+    async def process_json_file(self, json_path: str, batch_size: int = 32):
+        """Process a JSON file containing document chunks"""
+        json_path = Path(json_path).resolve()
+        self.logger.info(f"Processing JSON file: {json_path}")
         
-        logger.info(f"Collection '{collection_name}' contains {self.collection.count()} documents")
+        if not json_path.exists():
+            raise FileNotFoundError(f"JSON file not found at: {json_path}")
+            
+        try:
+            # Read the entire JSON file
+            with open(json_path, 'r') as f:
+                data = json.load(f)
+                
+            if not isinstance(data, dict) or 'chunks' not in data:
+                raise ValueError("Invalid JSON format: expecting object with 'chunks' array")
+                
+            chunks = data['chunks']
+            total_chunks = len(chunks)
+            self.logger.info(f"Found {total_chunks} chunks in the JSON file")
+            
+            # Process chunks in batches
+            for i in range(0, total_chunks, batch_size):
+                batch = chunks[i:i + batch_size]
+                await self.add_documents(batch)
+                self.logger.info(f"Processed {min(i + batch_size, total_chunks)}/{total_chunks} chunks")
+                
+        except json.JSONDecodeError as e:
+            self.logger.error(f"Error parsing JSON file: {e}")
+            raise
+        except Exception as e:
+            self.logger.error(f"Error processing JSON file: {e}")
+            raise
 
     def generate_document_id(self, content: str, metadata: dict) -> str:
-        """Generate a unique ID for a document based on its content and metadata"""
-        # Combine content and relevant metadata into a string
-        id_string = f"{content}{metadata.get('section_type', '')}{metadata.get('page_num', '')}"
-        # Generate a hash
-        return hashlib.md5(id_string.encode()).hexdigest()
+        """Generate a unique document ID with improved collision avoidance"""
+        id_components = [
+            content.strip(),
+            str(metadata.get('section_type', '')),
+            str(metadata.get('page_num', '')),
+            str(metadata.get('chunk_id', '')),
+            str(metadata.get('date', ''))
+        ]
+        id_string = '||'.join(id_components)
+        return hashlib.sha256(id_string.encode()).hexdigest()
 
-    async def add_documents(self, chunks: List[Dict[str, Any]], batch_size: int = 32):
-        """
-        Add document chunks to the vector store
+    async def add_documents(self, chunks: List[Dict[str, Any]]):
+        """Add document chunks with improved deduplication"""
+        existing_ids = set()
         
-        Args:
-            chunks: List of document chunks with content and metadata
-            batch_size: Number of chunks to process at once
-        """
-        total_chunks = len(chunks)
-        logger.info(f"Adding {total_chunks} chunks to vector store")
+        # Get existing IDs only once per batch
+        if self.collection.count() > 0:
+            existing_ids = set(self.collection.get()["ids"])
         
-        # Create batches with progress bar
-        batches = list(range(0, total_chunks, batch_size))
-        pbar = tqdm(batches, desc="Batches")
+        # Prepare batch data
+        texts = []
+        metadatas = []
+        ids = []
         
-        existing_ids = set(self.collection.get()["ids"]) if self.collection.count() > 0 else set()
-        added_count = 0
-        
-        for i in pbar:
-            batch = chunks[i:i + batch_size]
-            
-            # Prepare batch data
-            texts = []
-            metadatas = []
-            ids = []
-            
-            for chunk in batch:
-                # Format chunk content
-                formatted_content = f"""
-                Content: {chunk['content']}
-                Section: {chunk['section_type']}
-                Page: {chunk['page_num']}
-                """.strip()
+        for chunk in chunks:
+            # Extract content and clean it
+            content = chunk.get('content', '').strip()
+            if not content:
+                continue
                 
-                # Generate unique ID for the document
-                doc_id = self.generate_document_id(formatted_content, chunk)
+            # Generate ID first to check for duplicates
+            doc_id = self.generate_document_id(content, chunk.get('metadata', {}))
+            if doc_id in existing_ids:
+                continue
                 
-                # Skip if document already exists
-                if doc_id in existing_ids:
-                    continue
-                
-                texts.append(formatted_content)
-                metadatas.append({
-                    'section_type': chunk['section_type'],
-                    'page_num': chunk['page_num'],
-                    'chunk_id': chunk['chunk_id'],
-                    'timestamp': int(time.time()),
-                    **chunk.get('metadata', {})
-                })
-                ids.append(doc_id)
-                existing_ids.add(doc_id)
-            
-            # Add to ChromaDB if we have new documents
-            if texts:
-                try:
-                    self.collection.add(
-                        documents=texts,
-                        metadatas=metadatas,
-                        ids=ids
-                    )
-                    added_count += len(texts)
-                    logger.info(f"Added {len(texts)} new chunks")
-                except Exception as e:
-                    logger.error(f"Error adding batch to ChromaDB: {str(e)}")
-                    raise
+            texts.append(content)
+            metadatas.append({
+                'section_type': chunk.get('section_type', ''),
+                'page_num': chunk.get('page_num', ''),
+                'chunk_id': chunk.get('chunk_id', ''),
+                'date': chunk.get('date', ''),
+                'timestamp': int(time.time()),
+                **{k: v for k, v in chunk.get('metadata', {}).items() if v is not None}
+            })
+            ids.append(doc_id)
+            existing_ids.add(doc_id)
         
-        logger.info(f"Successfully added {added_count} new chunks. Collection now contains {self.collection.count()} documents")
+        if texts:
+            self.collection.add(
+                documents=texts,
+                metadatas=metadatas,
+                ids=ids
+            )
+            self.logger.info(f"Added {len(texts)} new documents")
 
     async def get_similar_chunks(
         self,
         query_text: str,
         top_k: int = 5,
-        min_similarity: float = 0.5
+        min_similarity: float = 0.3
     ) -> List[Dict[str, Any]]:
-        """
-        Retrieve similar chunks from the store
+        """Enhanced similarity search with better query processing"""
+        query_text = self._preprocess_query(query_text)
         
-        Args:
-            query_text: The query string
-            top_k: Number of similar chunks to retrieve
-            min_similarity: Minimum similarity threshold
+        # Ensure collection has documents before querying
+        collection_count = self.collection.count()
+        if collection_count == 0:
+            self.logger.warning("Collection is empty, no results to return")
+            return []
             
-        Returns:
-            List of similar chunks with their metadata and similarity scores
-        """
-        try:
-            # Get total document count
-            doc_count = self.collection.count()
-            if doc_count == 0:
-                logger.warning("No documents in collection")
-                return []
-                
-            # Adjust top_k if necessary
-            actual_top_k = min(top_k, doc_count)
-            if actual_top_k < top_k:
-                logger.info(f"Adjusted top_k from {top_k} to {actual_top_k} based on available documents")
-            
-            results = self.collection.query(
-                query_texts=[query_text],
-                n_results=actual_top_k,
-                include=['documents', 'metadatas', 'distances']
-            )
-            
-            # Filter by similarity threshold
-            filtered_chunks = []
-            for doc, meta, distance in zip(
-                results['documents'][0],
-                results['metadatas'][0],
-                results['distances'][0]
-            ):
-                similarity = 1 - (distance / 2)  # Convert distance to similarity
-                if similarity >= min_similarity:
-                    filtered_chunks.append({
-                        'content': doc,
-                        'metadata': meta,
-                        'similarity': similarity
-                    })
-            
-            logger.info(f"Found {len(filtered_chunks)} chunks above similarity threshold {min_similarity}")
-            return filtered_chunks
-            
-        except Exception as e:
-            logger.error(f"Error during similarity search: {str(e)}")
-            raise
+        # Adjust top_k to be within valid range
+        top_k = max(1, min(top_k, collection_count))
+        
+        results = self.collection.query(
+            query_texts=[query_text],
+            n_results=top_k,
+            include=['documents', 'metadatas', 'distances']
+        )
+        
+        filtered_chunks = []
+        for doc, meta, distance in zip(
+            results['documents'][0],
+            results['metadatas'][0],
+            results['distances'][0]
+        ):
+            similarity = 1 - (distance / 2)
+            if similarity >= min_similarity:
+                filtered_chunks.append({
+                    'content': doc,
+                    'metadata': meta,
+                    'similarity': similarity
+                })
+        
+        return sorted(filtered_chunks, key=lambda x: x['similarity'], reverse=True)
+
+    def _preprocess_query(self, query: str) -> str:
+        """Preprocess query with improved medical context"""
+        query = query.strip().lower()
+        
+        # Add medical context only if needed
+        medical_terms = {'medication', 'prescription', 'drug', 'dose', 'medicine'}
+        if not any(term in query for term in medical_terms):
+            query = f"medical record mentioning {query}"
+        
+        return query
 
 async def main():
-    # Setup paths
-    working_dir = Path("./rag_working_dir")
+    # Setup working directory paths
+    current_dir = Path(__file__).parent.resolve()
+    project_root = current_dir.parent
+    
+    # Construct paths
+    json_path = project_root / "processed" / "personal-injury-sample_processed.json"
+    working_dir = current_dir / "rag_working_dir"
+    
+    # Create working directory if it doesn't exist
     working_dir.mkdir(parents=True, exist_ok=True)
     
     # Initialize document store
-    doc_store = DocumentStore(persist_directory=str(working_dir / "chroma_db"))
+    doc_store = DocumentStore(
+        persist_directory=str(working_dir / "chroma_db")
+    )
     
-    # Example chunks - you should replace this with your actual data loading
-    chunks = [
-        {
-            "content": "Patient reports severe headache and dizziness",
-            "section_type": "symptoms",
-            "page_num": 1,
-            "chunk_id": "sym_001",
-            "metadata": {"date": "2024-01-20"}
-        },
-        {
-            "content": "Lower back pain reported, patient describes it as chronic",
-            "section_type": "symptoms",
-            "page_num": 1,
-            "chunk_id": "sym_002",
-            "metadata": {"date": "2024-01-20"}
-        },
-        {
-            "content": "Previous history of lumbar strain noted",
-            "section_type": "medical_history",
-            "page_num": 2,
-            "chunk_id": "hist_001",
-            "metadata": {"date": "2024-01-20"}
-        }
-    ]
+    # Process JSON file
+    try:
+        await doc_store.process_json_file(str(json_path))
+    except Exception as e:
+        print(f"Error processing JSON file: {e}")
+        return
     
-    # Add documents
-    await doc_store.add_documents(chunks)
-    
-    # Example similarity search
-    similar_chunks = await doc_store.get_similar_chunks("lower back pain", top_k=5)
-    print("\nSimilar chunks:")
-    for chunk in similar_chunks:
-        print(f"\nContent: {chunk['content']}")
-        print(f"Similarity: {chunk['similarity']:.3f}")
-        print(f"Metadata: {chunk['metadata']}")
+    # Example query
+    results = await doc_store.get_similar_chunks("Naproxen medications")
+    for i, result in enumerate(results, 1):
+        print(f"\nResult {i}:")
+        print(f"Content: {result['content']}")
+        print(f"Similarity: {result['similarity']:.3f}")
 
 if __name__ == "__main__":
     asyncio.run(main())

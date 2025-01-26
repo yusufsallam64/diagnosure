@@ -6,6 +6,7 @@ from collections import defaultdict
 import pytesseract
 from pdf2image import convert_from_path
 import numpy as np
+import cv2
 from dataclasses import dataclass
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from functools import partial
@@ -21,60 +22,61 @@ class MedicalSection:
     page_num: int
     bbox: Tuple[int, int, int, int]  # x1, y1, x2, y2 coordinates
 
+def remove_watermark(image: np.ndarray) -> np.ndarray:
+    """
+    Remove purple watermarks from the image using HSV color filtering.
+    Args:
+        image: Input image as a numpy array
+    Returns:
+        Processed grayscale image with watermarks removed
+    """
+    # Convert to HSV color space
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    
+    # Define purple range (adjust based on exact hue)
+    lower_purple = np.array([120, 40, 40])  # Hue: 120-160 (purple range)
+    upper_purple = np.array([160, 255, 255])
+    
+    # Create mask for purple regions
+    mask = cv2.inRange(hsv, lower_purple, upper_purple)
+    
+    # Invert mask to keep non-purple regions
+    inverted_mask = cv2.bitwise_not(mask)
+    
+    # Apply mask to original image
+    result = cv2.bitwise_and(image, image, mask=inverted_mask)
+    
+    # Convert to grayscale and enhance contrast
+    gray = cv2.cvtColor(result, cv2.COLOR_BGR2GRAY)
+    _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    
+    return thresh
+
 def process_single_page(page_data, section_markers):
-    """Process a single page in parallel with enhanced OCR"""
+    """Process a single page with watermark removal and OCR"""
     page_num, image = page_data
     
-    # Convert to grayscale for better OCR
-    image_np = np.array(image.convert('L'))
+    # Convert PIL image to numpy array
+    image_np = np.array(image)
     
-    # Enhanced OCR configuration
+    # Step 1: Remove watermark
+    processed_image = remove_watermark(image_np)
+    
+    # Step 2: Perform OCR on the processed image
     ocr_data = pytesseract.image_to_data(
-        image_np,
+        processed_image,
         output_type=pytesseract.Output.DICT,
         config='--oem 1 --psm 4'  # LSTM engine + single column mode
     )
     
-    # Extract sections and tables
-    sections = extract_sections(ocr_data, page_num, section_markers, image)
+    # Step 3: Extract sections
+    sections = extract_sections(ocr_data, page_num, section_markers)
+    
     return page_num, sections
 
-def detect_tables(ocr_data: Dict) -> List[List[List[str]]]:
-    """Detect tabular structures using text coordinates"""
-    rows = defaultdict(list)
-    for i in range(len(ocr_data['text'])):
-        if not ocr_data['text'][i].strip():
-            continue
-        y = ocr_data['top'][i]
-        rows[y].append({
-            'x': ocr_data['left'][i],
-            'text': ocr_data['text'][i],
-            'width': ocr_data['width'][i]
-        })
-
-    sorted_rows = sorted(rows.items(), key=lambda x: x[0])
-    table = []
-    for y, items in sorted_rows:
-        sorted_items = sorted(items, key=lambda x: x['x'])
-        table.append([item['text'] for item in sorted_items])
-
-    return [table] if len(table) > 1 and len(table[0]) > 1 else []
-
-def extract_sections(ocr_data: Dict, page_num: int, section_markers: Dict, image) -> List[MedicalSection]:
-    """Extract logical sections and tables from OCR data"""
+def extract_sections(ocr_data: Dict, page_num: int, section_markers: Dict) -> List[MedicalSection]:
+    """Extract logical sections from OCR data"""
     sections = []
-    
-    # Process tables first
-    tables = detect_tables(ocr_data)
-    for table in tables:
-        table_content = "\n".join(["|".join(row) for row in table])
-        sections.append(MedicalSection(
-            title="table",
-            content=table_content,
-            page_num=page_num,
-            bbox=(0, 0, image.width, image.height)
-        ))
-
     current_section = None
     current_text = []
     
@@ -82,11 +84,11 @@ def extract_sections(ocr_data: Dict, page_num: int, section_markers: Dict, image
         if not text.strip():
             continue
             
-        # Enhanced header detection
-        is_bold = ocr_data['conf'][i] > 90
-        section_type = identify_section_type(text, section_markers, is_bold)
+        # Check if this is a section header
+        section_type = identify_section_type(text, section_markers)
         
         if section_type:
+            # Save previous section if it exists
             if current_section and current_text:
                 sections.append(MedicalSection(
                     title=current_section,
@@ -94,11 +96,14 @@ def extract_sections(ocr_data: Dict, page_num: int, section_markers: Dict, image
                     page_num=page_num,
                     bbox=get_text_bbox(ocr_data, i)
                 ))
+            
+            # Start new section
             current_section = section_type
             current_text = []
         else:
             current_text.append(text)
     
+    # Don't forget the last section
     if current_section and current_text:
         sections.append(MedicalSection(
             title=current_section,
@@ -109,20 +114,12 @@ def extract_sections(ocr_data: Dict, page_num: int, section_markers: Dict, image
     
     return sections
 
-def identify_section_type(text: str, section_markers: Dict, is_bold: bool) -> Optional[str]:
-    """Identify section headers with formatting cues"""
-    text_clean = text.strip().lower()
-    
+def identify_section_type(text: str, section_markers: Dict) -> Optional[str]:
+    """Identify if text is a section header"""
+    text = text.lower().strip()
     for section_type, markers in section_markers.items():
-        if any(m.lower() in text_clean for m in markers):
+        if any(marker.lower() in text for marker in markers):
             return section_type
-    
-    if is_bold or text_clean.endswith(':'):
-        return 'generic_header'
-    
-    if text.isupper() and len(text) > 3:
-        return 'generic_header'
-    
     return None
 
 def get_text_bbox(ocr_data: Dict, index: int) -> Tuple[int, int, int, int]:
@@ -135,42 +132,49 @@ def get_text_bbox(ocr_data: Dict, index: int) -> Tuple[int, int, int, int]:
     )
 
 class ParallelMedicalDocumentProcessor:
-    """Enhanced medical document processor with table detection"""
+    """Handles OCR and initial processing of medical documents with parallel processing"""
     
     def __init__(self, output_dir: str = 'processed_docs', max_workers: int = None):
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(exist_ok=True)
         self.max_workers = max_workers or os.cpu_count()
         
+        # Medical document section markers
         self.section_markers = {
-            'patient_info': ['Patient Name', 'MRN:', 'DOB:', 'Gender'],
-            'history': ['Medical History', 'Surgical History', 'Family History'],
-            'assessment': ['Assessment', 'Clinical Impression', 'Differential Diagnosis'],
-            'plan': ['Treatment Plan', 'Follow Up', 'Discharge Plan'],
-            'medications': ['Active Medications', 'Discharge Medications'],
-            'allergies': ['Allergies', 'Drug Allergies'],
-            'vitals': ['Vital Signs', 'BMI:', 'Blood Pressure'],
-            'labs': ['Lab Results', 'CBC', 'Metabolic Panel'],
-            'imaging': ['Radiology', 'CT Scan', 'X-ray Findings'],
-            'procedures': ['Procedures', 'Operative Note', 'Surgical Report']
+            'patient_info': ['Patient Name', 'DOB:', 'Date of Birth'],
+            'history': ['Prior injury details', 'Medical History', 'Past Medical History'],
+            'symptoms': ['Current Symptoms', 'Chief Complaint', 'Present Illness'],
+            'diagnosis': ['Diagnosis', 'Assessment', 'Clinical Impression'],
+            'treatment': ['Treatment', 'Plan', 'Recommendations', 'Medications'],
+            'procedures': ['Procedure', 'Surgery', 'Intervention'],
+            'vitals': ['Vital Signs', 'Blood Pressure', 'Temperature'],
+            'labs': ['Laboratory', 'Lab Results', 'Test Results'],
+            'imaging': ['Imaging', 'X-ray', 'MRI', 'CT Scan'],
         }
 
     def process_pdf(self, pdf_path: str) -> List[MedicalSection]:
-        """Process PDF with enhanced OCR and structure detection"""
+        """Process a medical PDF document and extract structured sections in parallel"""
         logger.info(f"Processing PDF: {pdf_path}")
+        
         try:
+            # Convert PDF to images
             images = convert_from_path(pdf_path)
+            
+            # Create page data tuples (page_num, image)
             page_data = [(i+1, img) for i, img in enumerate(images)]
             
+            # Process pages in parallel
             all_sections = []
             process_func = partial(process_single_page, section_markers=self.section_markers)
             
             with ProcessPoolExecutor(max_workers=self.max_workers) as executor:
+                # Submit all pages for processing
                 future_to_page = {
                     executor.submit(process_func, pd): pd[0] 
                     for pd in page_data
                 }
                 
+                # Collect results as they complete
                 page_sections = {}
                 for future in as_completed(future_to_page):
                     page_num = future_to_page[future]
@@ -181,6 +185,7 @@ class ParallelMedicalDocumentProcessor:
                         logger.error(f"Error processing page {page_num}: {e}")
                         continue
                 
+                # Combine sections in page order
                 for page_num in sorted(page_sections.keys()):
                     all_sections.extend(page_sections[page_num])
                     logger.info(f"Processed page {page_num}: Found {len(page_sections[page_num])} sections")
