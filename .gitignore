@@ -6,3 +6,4 @@ prognosis_validation/data
 *.log
 lightrag_cache
 **/chroma_db
+site/package-lock.json
