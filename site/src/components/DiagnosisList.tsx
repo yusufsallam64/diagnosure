@@ -171,8 +171,8 @@ const DiagnosisList = () => {
                   <label className="text-sm font-medium">Start Date</label>
                   <CalendarComponent
                     mode="single"
-                    selected={startDate}
-                    onSelect={setStartDate}
+                    selected={startDate as any}
+                    onSelect={setStartDate as any}
                     className="rounded-md border"
                   />
                   {startDate && (
@@ -197,8 +197,8 @@ const DiagnosisList = () => {
                   <label className="text-sm font-medium">End Date</label>
                   <CalendarComponent
                     mode="single"
-                    selected={endDate}
-                    onSelect={setEndDate}
+                    selected={endDate as any}
+                    onSelect={setEndDate as any}
                     className="rounded-md border"
                   />
                   {endDate && (
@@ -307,7 +307,7 @@ const DiagnosisList = () => {
           
           {selectedDiagnosis && (
             <div className="space-y-6 overflow-y-auto pr-2">
-              <Alert variant={getRiskLevel(selectedDiagnosis.validationData.risk_level)}>
+              <Alert variant={getRiskLevel(selectedDiagnosis.validationData.risk_level) as any}>
                 <AlertCircle className="h-4 w-4" />
                 <AlertTitle>Validation Summary</AlertTitle>
                 <AlertDescription>

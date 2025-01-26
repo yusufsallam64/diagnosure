@@ -70,8 +70,8 @@ const Prescreen: React.FC = () => {
     if (audioContextRef.current) {
       audioContextRef.current.close();
     }
-
-    const audioContext = new (window.AudioContext || window.webkitAudioContext)({
+    // TODO --> patch this since the thing after the or isnt actually real??
+    const audioContext = new (window.AudioContext || (window as any).webkitAudioContext )({
       sampleRate: 16000
     });
     audioContextRef.current = audioContext;

@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 120">
+  <!-- Main Icon Group -->
+  <g transform="translate(40, 15)">
+    <!-- Hexagonal Base Shape -->
+    <path d="M40 0 L80 23.1 L80 69.3 L40 92.4 L0 69.3 L0 23.1 Z" 
+          fill="oklch(96.29% 0.004 56.37)" 
+          stroke="oklch(58.19% 0.208 29.21)" 
+          stroke-width="2"/>
+    
+    <!-- Stylized D for DiagnoSure -->
+    <path d="M30 25 
+             C45 25, 55 35, 55 46 
+             C55 57, 45 67, 30 67 
+             L30 25" 
+          fill="oklch(58.19% 0.208 29.21)"/>
+    
+    <!-- Pulse Line -->
+    <path d="M25 46 
+             L35 46 
+             L40 36 
+             L45 56 
+             L50 46 
+             L60 46" 
+          fill="none" 
+          stroke="oklch(64.13% 0.069 162.34)" 
+          stroke-width="2.5" 
+          stroke-linecap="round" 
+          stroke-linejoin="round"/>
+  </g>
+
+  <!-- Company Name -->
+  <text x="150" y="65" 
+        font-family="Quicksand, sans-serif" 
+        font-size="42" 
+        font-weight="700" 
+        fill="oklch(22.06% 0.011 73.33)">DiagnoSure</text>
+  
+  <!-- Tagline -->
+  <text x="150" y="85" 
+        font-family="Plus Jakarta Sans, sans-serif" 
+        font-size="14" 
+        fill="oklch(58.19% 0.208 29.21)">AI-Powered Medical Communication</text>
+</svg>

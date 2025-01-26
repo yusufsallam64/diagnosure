@@ -144,8 +144,8 @@ const PastPreScreens = () => {
                 <label className="text-sm font-medium">Start Date</label>
                 <CalendarComponent
                   mode="single"
-                  selected={startDate}
-                  onSelect={setStartDate}
+                  selected={startDate as any}
+                  onSelect={setStartDate as any}
                   className="rounded-md border"
                   classNames={{
                     month: "space-y-4",
@@ -176,8 +176,8 @@ const PastPreScreens = () => {
                 <label className="text-sm font-medium">End Date</label>
                 <CalendarComponent
                   mode="single"
-                  selected={endDate}
-                  onSelect={setEndDate}
+                  selected={endDate as any}
+                  onSelect={setEndDate as any}
                   className="rounded-md border"
                   classNames={{
                     month: "space-y-4",
