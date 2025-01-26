@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Send, RotateCcw, Share2 } from 'lucide-react';
 import Card from './ui/card';
 import { useSession } from "next-auth/react";
+import { useRouter } from 'next/router';
 
 interface ValidationResponse {
   validation_result: {
@@ -16,6 +17,7 @@ interface ValidationResponse {
 
 const DiagnosisChat = (prescreenId: any) => {
   const { data: session } = useSession();
+  const router = useRouter()
   const [diagnosis, setDiagnosis] = useState('');
   const [previousDiagnosis, setPreviousDiagnosis] = useState('');
   const [validationData, setValidationData] = useState<ValidationResponse | null>(null);
@@ -88,17 +90,19 @@ const DiagnosisChat = (prescreenId: any) => {
         throw new Error(result.error || 'Failed to publish diagnosis');
       }
 
-      // Handle successful publication
       console.log('Diagnosis published successfully:', result);
-
-      // Reset the form
       handleReset();
+      
+      // Navigate back to doctor view
+      router.push('/doctorView');
+
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to publish diagnosis');
     } finally {
       setIsPublishing(false);
     }
   };
+
 
   const renderAnalysis = () => {
     if (!validationData) return null;
