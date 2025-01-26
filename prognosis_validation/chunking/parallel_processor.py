@@ -1,10 +1,12 @@
 import os
 import logging
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
+from collections import defaultdict
 import pytesseract
 from pdf2image import convert_from_path
 import numpy as np
+import cv2
 from dataclasses import dataclass
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from functools import partial
@@ -18,23 +20,56 @@ class MedicalSection:
     title: str
     content: str
     page_num: int
-    bbox: tuple  # x1, y1, x2, y2 coordinates
+    bbox: Tuple[int, int, int, int]  # x1, y1, x2, y2 coordinates
+
+def remove_watermark(image: np.ndarray) -> np.ndarray:
+    """
+    Remove purple watermarks from the image using HSV color filtering.
+    Args:
+        image: Input image as a numpy array
+    Returns:
+        Processed grayscale image with watermarks removed
+    """
+    # Convert to HSV color space
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    
+    # Define purple range (adjust based on exact hue)
+    lower_purple = np.array([120, 40, 40])  # Hue: 120-160 (purple range)
+    upper_purple = np.array([160, 255, 255])
+    
+    # Create mask for purple regions
+    mask = cv2.inRange(hsv, lower_purple, upper_purple)
+    
+    # Invert mask to keep non-purple regions
+    inverted_mask = cv2.bitwise_not(mask)
+    
+    # Apply mask to original image
+    result = cv2.bitwise_and(image, image, mask=inverted_mask)
+    
+    # Convert to grayscale and enhance contrast
+    gray = cv2.cvtColor(result, cv2.COLOR_BGR2GRAY)
+    _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    
+    return thresh
 
 def process_single_page(page_data, section_markers):
-    """Process a single page in parallel"""
+    """Process a single page with watermark removal and OCR"""
     page_num, image = page_data
     
-    # Convert to numpy array for processing
+    # Convert PIL image to numpy array
     image_np = np.array(image)
     
-    # Perform OCR with layout analysis
+    # Step 1: Remove watermark
+    processed_image = remove_watermark(image_np)
+    
+    # Step 2: Perform OCR on the processed image
     ocr_data = pytesseract.image_to_data(
-        image_np, 
+        processed_image,
         output_type=pytesseract.Output.DICT,
-        config='--psm 3'  # Fully automatic page segmentation
+        config='--oem 1 --psm 4'  # LSTM engine + single column mode
     )
     
-    # Extract sections from this page
+    # Step 3: Extract sections
     sections = extract_sections(ocr_data, page_num, section_markers)
     
     return page_num, sections
@@ -87,7 +122,7 @@ def identify_section_type(text: str, section_markers: Dict) -> Optional[str]:
             return section_type
     return None
 
-def get_text_bbox(ocr_data: Dict, index: int) -> tuple:
+def get_text_bbox(ocr_data: Dict, index: int) -> Tuple[int, int, int, int]:
     """Get bounding box coordinates for text"""
     return (
         ocr_data['left'][index],

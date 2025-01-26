@@ -5,3 +5,4 @@ prognosis_validation/data
 **/__pycache__
 *.log
 lightrag_cache
+**/chroma_db

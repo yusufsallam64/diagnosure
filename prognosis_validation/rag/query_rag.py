@@ -1,178 +1,279 @@
 import asyncio
+import argparse
 import logging
-import torch
-import numpy as np
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Optional, List, Dict, Any
+from openai import AsyncOpenAI
+from build_rag import DocumentStore
 from dotenv import load_dotenv
-from atlas_storage import MongoVectorStorage
-from build_rag import create_embedding_function
-from lightrag import QueryParam
-from lightrag.llm.openai import gpt_4o_mini_complete
 
+# Load environment variables
 load_dotenv()
 
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[logging.StreamHandler()]
+    handlers=[
+        logging.StreamHandler(),
+        # logging.FileHandler('logs/query.log')
+    ]
 )
 logger = logging.getLogger(__name__)
 
 class RAGQueryEngine:
-    def __init__(self, collection, embedding_func, llm_func=gpt_4o_mini_complete):
-        self.collection = collection
-        self.embedding_func = embedding_func
-        self.llm_func = llm_func
-        self.top_k = 5
-        self.score_threshold = 0  # Temporarily set to 0.0 for debugging
+    def __init__(self, store_path: str):
+        """Initialize RAG query engine with path to document store"""
+        self.store_path = store_path
+        self.doc_store = None
+        self.client = AsyncOpenAI()
 
-    async def _get_query_embedding(self, query: str) -> List[float]:
-        """Generate embedding for the query"""
-        embeddings = await self.embedding_func.func([query])
-        embedding = embeddings[0].tolist()  # Convert to Python list
+    async def initialize(self):
+        """Initialize the document store connection"""
+        try:
+            self.doc_store = DocumentStore(persist_directory=self.store_path)
+            logger.info("Document store initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize document store: {e}")
+            raise
+
+    async def search(
+        self,
+        query: str,
+        top_k: int = 5,
+        min_similarity: float = 0.5,
+        section_filter: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """Search for similar chunks with optional section filtering"""
+        try:
+            results = await self.doc_store.get_similar_chunks(
+                query,
+                top_k=top_k,
+                min_similarity=min_similarity
+            )
+            
+            # Apply section filter if specified
+            if section_filter:
+                results = [
+                    r for r in results 
+                    if r['metadata']['section_type'].lower() == section_filter.lower()
+                ]
+            
+            return results
+            
+        except Exception as e:
+            logger.error(f"Search failed: {e}")
+            raise
+
+    def format_context(self, results: List[Dict[str, Any]]) -> str:
+        """Format search results into context for GPT"""
+        if not results:
+            return "No relevant medical documents found."
         
-        # Normalize embedding (required for cosine similarity)
-        embedding_np = np.array(embedding)
-        embedding_np = embedding_np / np.linalg.norm(embedding_np)
-        return embedding_np.tolist()  # Convert back to Python list
+        context_parts = []
+        for i, result in enumerate(results, 1):
+            context_parts.append(f"Document {i}:\n{result['content']}\n")
+            
+        return "\n".join(context_parts)
 
-    async def vector_search(self, query: str) -> List[Dict[str, Any]]:
-        """Perform vector similarity search in MongoDB"""
-        query_embedding = await self._get_query_embedding(query)
-        logger.info(f"Query embedding (first 5 dims): {query_embedding[:5]}")
+    async def get_answer(
+        self,
+        query: str,
+        context: str,
+        model: str = "gpt-4",
+        temperature: float = 0.7
+    ) -> str:
+        """Get answer from GPT using the provided context"""
+        try:
+            system_prompt = """You are a helpful medical document analysis assistant. Your role is to:
+            1. Answer questions based on the provided medical documents
+            2. Only use information present in the provided documents
+            3. Clearly indicate when information is not available in the documents
+            4. Be precise and medical in your language when appropriate
+            5. Format your responses in a clear, organized manner"""
 
-        pipeline = [
-            {
-                "$vectorSearch": {
-                    "index": "vector_index",
-                    "path": "vector",
-                    "queryVector": query_embedding,
-                    "numCandidates": 100,
-                    "limit": self.top_k,
-                }
-            },
-            {
-                "$project": {
-                    "_id": 0,
-                    "content": 1,
-                    "metadata": 1,
-                    "score": {"$meta": "vectorSearchScore"}
-                }
-            }
-        ]
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"""Please answer the following question based on the provided medical documents:
 
-        logger.info("Running MongoDB aggregation pipeline for vector search...")
-        results = await asyncio.to_thread(
-            self.collection.aggregate,
-            pipeline
-        )
+Query: {query}
 
-        results = list(results)
-        logger.info(f"Found {len(results)} results from vector search.")
-        for i, res in enumerate(results):
-            logger.info(f"Result {i + 1}:")
-            logger.info(f"  Content: {res.get('content', '')[:200]}...")
-            logger.info(f"  Metadata: {res.get('metadata', {})}")
-            logger.info(f"  Score: {res.get('score', 0)}")
+Relevant Medical Documents:
+{context}
 
-        return results
+Please provide a clear and concise answer based solely on the information in these documents."""}
+            ]
 
-    async def generate_answer(self, query: str, context: List[str]) -> str:
-        """Generate answer using LLM with retrieved context"""
-        context_str = "\n\n".join(context)
-        prompt = f"""Based on the following context, answer the question. If unsure, say you don't know.
+            response = await self.client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=3000
+            )
+            
+            return response.choices[0].message.content
+            
+        except Exception as e:
+            logger.error(f"Error getting GPT response: {e}")
+            raise
 
-        Context: {context_str}
+    def display_results(self, query: str, context: str, answer: str, show_context: bool = False):
+        """Display search results and GPT answer in a formatted way"""
+        print("\n" + "="*80)
+        print(f"Query: {query}")
+        print("="*80)
+        
+        if show_context:
+            print("\nContext from Medical Documents:")
+            print("-"*80)
+            print(context)
+            print("-"*80)
+        
+        print("\nAnswer:")
+        print("-"*80)
+        print(answer)
+        print("="*80)
 
-        Question: {query}
-        Answer: """
-
-        logger.info("Generating answer using LLM...")
-        return await self.llm_func(
-            QueryParam(prompt=prompt, max_tokens=500, temperature=0.3)
-        )
-
-    async def query(self, query: str) -> Dict[str, Any]:
-        """Run full RAG query pipeline"""
-        logger.info(f"Running query: {query}")
-
-        # Perform vector search
-        search_results = await self.vector_search(query)
-
-        # Apply score threshold
-        filtered_results = [res for res in search_results if res['score'] >= self.score_threshold]
-        logger.info(f"Filtered results after applying threshold ({self.score_threshold}): {len(filtered_results)}")
-
-        if not filtered_results:
-            return {"answer": "No relevant context found", "context": [], "metadata": [], "scores": []}
-
-        # Extract context and metadata
-        context = [res["content"] for res in filtered_results]
-        metadata = [res["metadata"] for res in filtered_results]
-        scores = [res["score"] for res in filtered_results]
-
-        # Generate answer
-        answer = await self.generate_answer(query, context)
-
-        return {
-            "answer": answer,
-            "context": context,
-            "metadata": metadata,
-            "scores": scores
-        }
-
-async def inspect_database(collection):
-    """Inspect the database contents for debugging"""
-    logger.info("Inspecting database contents...")
-    sample_documents = await asyncio.to_thread(collection.find().limit(5).to_list)
-    if sample_documents:
-        logger.info(f"Found {len(sample_documents)} sample documents.")
-        for i, doc in enumerate(sample_documents):
-            logger.info(f"Sample document {i + 1}:")
-            logger.info(f"  Content: {doc.get('content', '')[:200]}...")
-            logger.info(f"  Metadata: {doc.get('metadata', {})}")
-            logger.info(f"  Vector (first 5 dims): {doc.get('vector', [])[:5]}")
-    else:
-        logger.warning("No documents found in the database.")
 
 async def main():
-    # Get MongoDB collection
-    from atlas_manager import get_mongodb
-    mongodb = get_mongodb()
-    collection = mongodb.get_collection()
+    parser = argparse.ArgumentParser(description='RAG Query System for Medical Documents')
+    
+    parser.add_argument(
+        '--query',
+        type=str,
+        help='Query string to search for'
+    )
+    
+    parser.add_argument(
+        '--store-path',
+        type=str,
+        default='./rag/rag_working_dir/chroma_db',
+        help='Path to document store'
+    )
+    parser.add_argument(
+        '--top-k',
+        type=int,
+        default=5,
+        help='Number of documents to retrieve'
+    )
+    parser.add_argument(
+        '--min-similarity',
+        type=float,
+        default=0.5,
+        help='Minimum similarity threshold (0-1)'
+    )
+    parser.add_argument(
+        '--section',
+        type=str,
+        help='Filter by section type'
+    )
+    parser.add_argument(
+        '--show-context',
+        action='store_true',
+        help='Show retrieved documents in output'
+    )
+    parser.add_argument(
+        '--model',
+        type=str,
+        default='gpt-4',
+        help='GPT model to use'
+    )
+    parser.add_argument(
+        '--temperature',
+        type=float,
+        default=0.7,
+        help='Temperature for GPT response'
+    )
+    parser.add_argument(
+        '--run-sample-queries',
+        action='store_true',
+        help='Run a predefined set of sample queries'
+    )
+    args = parser.parse_args()
 
-    # Inspect database contents
-    await inspect_database(collection)
+    try:
+        # Initialize RAG engine
+        engine = RAGQueryEngine(args.store_path)
+        await engine.initialize()
 
-    # Initialize embedding function
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    logger.info(f"Using device: {device}")
-    embedding_func = await create_embedding_function(device)
+        if args.run_sample_queries:
+            # Define sample queries
+            sample_queries = [
+                "What are the key findings from the imaging studies of the patient's cervical spine and brain?",
+                "Summarize the patient's clinical history and presenting symptoms.",
+                "What were the findings from the cervical spine MRI without contrast?",
+                "Are there any abnormalities in the brain imaging studies?",
+                "Is there any evidence of central canal stenosis or neural foraminal narrowing in the cervical spine?",
+                "What are the patient's primary complaints and symptoms?",
+                "What is the clinical history of the patient regarding left-sided paresthesias and right-sided numbness?",
+                "Has the patient been evaluated for stroke or cervical radiculopathy?",
+                "What is the current diagnosis for the patient's condition?",
+                "What treatment plans have been recommended for the patient?",
+                "Is there any evidence of conversion disorder, and how is it being managed?",
+                "What were the results of the neurological evaluation for the patient?",
+                "Has the patient been assessed for psychiatric conditions such as depression or anxiety?",
+                "What is the psychiatric review of symptoms for the patient?",
+                "What are the key impressions from the imaging and clinical evaluations?",
+                "What are the recommendations for ongoing care and follow-up?",
+                "Are there any specific precautions or assistive measures recommended for the patient?",
+                "What does the imaging section reveal about the patient's cervical spine and brain?",
+                "What information is available in the patient_info section regarding the patient's history and symptoms?",
+                "What treatments have been documented in the treatment section?",
+                "What are the discharge instructions for the patient?",
+                "What follow-up care or outpatient services are recommended?",
+                "Are there any specific medications or therapies prescribed upon discharge?"
+            ]
 
-    # Initialize query engine
-    query_engine = RAGQueryEngine(collection, embedding_func)
-
-    # Define the question
-    question = "What are the key considerations for personal injury cases?"
-
-    # Run the query
-    result = await query_engine.query(question)
-
-    # Print the answer and context
-    print("\nAnswer:", result["answer"])
-
-    if result["context"]:
-        print("\nContext Sources:")
-        for i, (ctx, meta) in enumerate(zip(result["context"], result["metadata"])):
-            print(f"\nChunk {i + 1}:")
-            print(f"Page {meta.get('page_num', 'N/A')}")
-            print(f"Section: {meta.get('section_type', 'N/A')}")
-            print(f"Score: {result['scores'][i]:.3f}" if i < len(result['scores']) else "Score: N/A")
-            print(ctx[:200] + ("..." if len(ctx) > 200 else ""))
-    else:
-        print("\nNo relevant context found")
-
+            # Run each sample query
+            for query in sample_queries:
+                print(f"\nRunning query: {query}")
+                results = await engine.search(
+                    query,
+                    top_k=args.top_k,
+                    min_similarity=args.min_similarity,
+                    section_filter=args.section
+                )
+                context = engine.format_context(results)
+                answer = await engine.get_answer(
+                    query,
+                    context,
+                    model=args.model,
+                    temperature=args.temperature
+                )
+                engine.display_results(
+                    query,
+                    context,
+                    answer,
+                    show_context=args.show_context
+                )
+        else:
+            # Run a single query provided by the user
+            if not args.query:
+                raise ValueError("Please provide a query or use --run-sample-queries to run predefined queries.")
+            
+            results = await engine.search(
+                args.query,
+                top_k=args.top_k,
+                min_similarity=args.min_similarity,
+                section_filter=args.section
+            )
+            context = engine.format_context(results)
+            answer = await engine.get_answer(
+                args.query,
+                context,
+                model=args.model,
+                temperature=args.temperature
+            )
+            engine.display_results(
+                args.query,
+                context,
+                answer,
+                show_context=args.show_context
+            )
+        
+    except Exception as e:
+        logger.error(f"Error during RAG query execution: {e}")
+        raise
+    
 if __name__ == "__main__":
     asyncio.run(main())
