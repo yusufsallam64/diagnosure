@@ -1,9 +1,9 @@
 import React from 'react';
 import type { GetServerSidePropsContext } from "next";
-import { useSession } from "next-auth/react";
+import { useSession, signOut } from "next-auth/react";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/pages/api/auth/[...nextauth]";
-import { ArrowRight, User } from 'lucide-react';
+import { ArrowRight, User, LogOut } from 'lucide-react';
 import { useRouter } from 'next/router';
 import PastPreScreens from '@/components/PastPreScreens';
 import DiagnosisList from '@/components/DiagnosisList';
@@ -35,18 +35,28 @@ const Dashboard = () => {
         <div className="min-h-screen bg-background-900 text-text p-4 md:p-8">
             <div className="max-w-6xl mx-auto space-y-8">
                 {/* Header */}
-                <div className="flex items-center gap-4 mb-8">
-                    <div className="w-12 h-12 rounded-full bg-primary-500 flex items-center justify-center">
-                        <User className="w-6 h-6 text-background-900" />
+                <div className="flex items-center justify-between mb-8">
+                    <div className="flex items-center gap-4">
+                        <div className="w-12 h-12 rounded-full bg-primary-500 flex items-center justify-center">
+                            <User className="w-6 h-6 text-background-900" />
+                        </div>
+                        <div>
+                            <h1 className="font-heading text-2xl md:text-3xl font-bold">
+                                Welcome back, {session?.user?.name?.split(' ')[0]}
+                            </h1>
+                            <p className="text-text/80 font-body">
+                                Your health dashboard
+                            </p>
+                        </div>
                     </div>
-                    <div>
-                        <h1 className="font-heading text-2xl md:text-3xl font-bold">
-                            Welcome back, {session?.user?.name?.split(' ')[0]}
-                        </h1>
-                        <p className="text-text/80 font-body">
-                            Your health dashboard
-                        </p>
-                    </div>
+                    <button
+                        onClick={() => signOut({ callbackUrl: '/' })}
+                        className="flex items-center gap-2 px-4 py-2 rounded-lg bg-background-800 hover:bg-background-700 transition-colors"
+                        aria-label="Sign out"
+                    >
+                        <LogOut className="w-5 h-5" />
+                        <span>Sign out</span>
+                    </button>
                 </div>
 
                 {/* Main CTA */}
@@ -70,10 +80,6 @@ const Dashboard = () => {
 export async function getServerSideProps(context: GetServerSidePropsContext) {
     const session = await getServerSession(context.req, context.res, authOptions);
     
-    // If the user is already logged in, redirect.
-    // Note: Make sure not to redirect to the same page
-    // To avoid an infinite loop!
-
     if (!session) {
         return { redirect: { destination: "/auth/signin" } };
     }
