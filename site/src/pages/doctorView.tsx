@@ -47,9 +47,7 @@ const DoctorView = () => {
          <div className="max-w-6xl mx-auto space-y-8">
             <div className="flex items-center gap-4 mb-8">
                <div className="w-12 h-12 rounded-full bg-primary-500 flex items-center justify-center">
-                  
-                     <User className="w-6 h-6 text-background-900" />
-               
+                  <User className="w-6 h-6 text-background-900" />
                </div>
                <div>
                   <h1 className="font-heading text-2xl md:text-3xl font-bold">
@@ -85,9 +83,8 @@ const DoctorView = () => {
                            />
                            <div className="relative w-11 h-6 bg-background-700 rounded-full transition-colors duration-300 peer-checked:bg-primary-500">
                               <div
-                                 className={`absolute top-[2px] left-[2px] w-5 h-5 bg-white rounded-full transition-transform duration-300 ${
-                                    showPrescreen ? "translate-x-5" : "translate-x-0"
-                                 }`}
+                                 className={`absolute top-[2px] left-[2px] w-5 h-5 bg-white rounded-full transition-transform duration-300 ${showPrescreen ? "translate-x-5" : "translate-x-0"
+                                    }`}
                               />
                            </div>
                            <span className="ml-3 text-sm font-medium text-text/80">Pre-screen Only</span>
@@ -153,7 +150,7 @@ const DoctorView = () => {
                ))}
             </div>
          </div>
-         
+
          {selectedPatient && (
             <PatientModal
                patientId={selectedPatient._id}

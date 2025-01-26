@@ -29,21 +29,10 @@ const mockPrescreens: Prescreen[] = [
 
 const PatientModal = ({ patientId, patientName, onClose }: PatientModalProps) => {
   const router = useRouter();
-  const [isLoading, setIsLoading] = React.useState(true);
 
-  React.useEffect(() => {
-    // Simulate loading delay
-    const timer = setTimeout(() => setIsLoading(false), 1000);
-    return () => clearTimeout(timer);
-  }, []);
-
-  const handleContinue = () => {
-    router.push(`/diagnosis/${patientId}`);
+  const handleNavigation = () => {
+    router.push(`/diagnosis?id=${patientId}`);
   };
-
-  if (isLoading) {
-    return <div>Loading...</div>;
-  }
 
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
@@ -55,32 +44,24 @@ const PatientModal = ({ patientId, patientName, onClose }: PatientModalProps) =>
           </button>
         </div>
 
-        <div className="space-y-4 max-h-96 overflow-y-auto">
+        <div className="space-y-4">
           {mockPrescreens.map((prescreen, index) => (
-            <div key={index} className="p-4 bg-background-700 rounded-lg">
-              <p className="text-sm text-text/60 mb-2">{prescreen.date}</p>
-              <p className="mb-2">Severity: {prescreen.severity}</p>
-              <div className="space-y-1">
-                {prescreen.symptoms.map((symptom, i) => (
-                  <p key={i} className="text-sm text-text/80">{symptom}</p>
-                ))}
-              </div>
-            </div>
+            <button
+              key={index}
+              onClick={handleNavigation}
+              className="w-full p-4 bg-background-700 rounded-lg text-left hover:bg-background-600 transition-colors"
+            >
+              Prescreen ({prescreen.date})
+            </button>
           ))}
         </div>
 
-        <div className="mt-6 flex justify-end gap-4">
+        <div className="mt-6">
           <button
-            onClick={onClose}
-            className="px-4 py-2 rounded-lg border border-background-600 hover:bg-background-700"
+            onClick={handleNavigation}
+            className="w-full px-4 py-2 rounded-lg bg-primary-500 hover:bg-primary-600 text-white"
           >
-            Cancel
-          </button>
-          <button
-            onClick={handleContinue}
-            className="px-4 py-2 rounded-lg bg-primary-500 hover:bg-primary-600 text-white"
-          >
-            Continue to Diagnosis
+            Skip to Diagnosis
           </button>
         </div>
       </div>
