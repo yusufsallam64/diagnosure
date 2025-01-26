@@ -49,7 +49,7 @@ export default async function handler(req, res) {
       file: fileStream,
       model: "whisper-1",
       response_format: "json",
-      prompt: "Translate to English.",
+      prompt: "",
     });
 
     // Clean up the temporary file
