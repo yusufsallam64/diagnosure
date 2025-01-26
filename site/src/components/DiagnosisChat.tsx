@@ -111,7 +111,7 @@ const DiagnosisChat = (prescreenId: any) => {
           // Input View
           <div className="h-full flex flex-col space-y-4">
             {previousDiagnosis && (
-              <div className="p-4 rounded-lg bg-gray-50 border border-gray-200">
+              <div className="p-4 rounded-lg bg-background-900 border border-gray-200">
                 <h4 className="text-sm font-medium text-gray-600 mb-2">Previous Diagnosis</h4>
                 <p className="text-sm text-gray-800">{previousDiagnosis}</p>
               </div>
