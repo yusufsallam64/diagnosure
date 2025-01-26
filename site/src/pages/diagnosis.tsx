@@ -1,6 +1,6 @@
-import React from 'react';
+import React, {useEffect, useState} from 'react';
 import { useSearchParams } from 'next/navigation';
-import { FileText, AlertCircle } from 'lucide-react';
+import { FileText, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react';
 import DiagnosisChat from '@/components/DiagnosisChat';
 
 const Tabs = ({ children }: { children: React.ReactNode }) => {
@@ -14,6 +14,11 @@ const TabsList = ({ children }: { children: React.ReactNode }) => {
     </div>
   );
 };
+interface ValidatedSegment {
+  text: string;
+  start: number;
+  end: number;
+}
 
 const TabsTrigger = ({ 
   value, 
@@ -67,6 +72,9 @@ const PreScreenDisplay = ({
   prescreen?: any;
   isLoading: boolean;
 }) => {
+  const [isTranscriptOpen, setIsTranscriptOpen] = useState(false);
+  const [isResponsesOpen, setIsResponsesOpen] = useState(false);
+
   if (isLoading) {
     return (
       <div className="flex-1 flex items-center justify-center p-4">
@@ -86,29 +94,112 @@ const PreScreenDisplay = ({
     );
   }
 
+  const transcriptData = prescreen.validatedTranscript || prescreen.originalTranscript || [];
+
   return (
-    <div className="flex-1 p-4">
-      <div className="space-y-4">
-        <p>Date: {new Date(prescreen.timestamp).toLocaleDateString()}</p>
-        <p>Severity: {prescreen.severity}</p>
-        <div>
-          <h4 className="mb-2">Symptoms:</h4>
-          <ul className="list-disc pl-4">
-            {prescreen.symptoms.map((symptom: string, index: number) => (
-              <li key={index}>{symptom}</li>
+    <div className="flex-1 p-4 space-y-3 overflow-y-auto">
+      {/* Summary Section */}
+      <div className="bg-background-700/50 p-4 rounded-lg">
+        <h3 className="text-lg font-semibold mb-2">Summary</h3>
+        <p className="text-sm">Date: {new Date(prescreen.timestamp).toLocaleDateString()}</p>
+        {prescreen.validationResult && (
+          <div className="mt-2 space-y-1">
+            <p className="text-sm">
+              Confidence Score: {prescreen.validationResult.confidenceScore}
+            </p>
+            <p className="text-sm">
+              Valid: {prescreen.validationResult.isValid ? 'Yes' : 'No'}
+            </p>
+          </div>
+        )}
+      </div>
+
+      {/* Medical Entities Section */}
+      {prescreen.validationResult?.medicalEntities && (
+        <div className="bg-background-700/50 p-4 rounded-lg">
+          <h3 className="text-lg font-semibold mb-2">Medical Entities</h3>
+          <div className="flex flex-wrap gap-2">
+            {prescreen.validationResult.medicalEntities.map((entity: string, index: number) => (
+              <span key={index} className="px-3 py-1 bg-background-700 rounded-full text-sm">
+                {entity}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Issues Section */}
+      {prescreen.validationResult?.detectedIssues && (
+        <div className="bg-background-700/50 p-4 rounded-lg">
+          <h3 className="text-lg font-semibold mb-2">Detected Issues</h3>
+          <ul className="space-y-2">
+            {prescreen.validationResult.detectedIssues.map((issue: string, index: number) => (
+              <li key={index} className="text-sm bg-background-700 p-2 rounded">
+                {issue}
+              </li>
             ))}
           </ul>
         </div>
-        {prescreen.notes && (
-          <div>
-            <h4 className="mb-2">Notes:</h4>
-            <p>{prescreen.notes}</p>
+      )}
+
+      {/* Model Responses Section */}
+      {prescreen.modelResponses && prescreen.modelResponses.length > 0 && (
+        <div className="bg-background-700/50 rounded-lg">
+          <button
+            onClick={() => setIsResponsesOpen(!isResponsesOpen)}
+            className="w-full p-4 flex items-center justify-between text-lg font-semibold hover:bg-background-700/70 rounded-lg transition-colors"
+          >
+            <span>Model Responses</span>
+            {isResponsesOpen ? (
+              <ChevronUp className="w-5 h-5" />
+            ) : (
+              <ChevronDown className="w-5 h-5" />
+            )}
+          </button>
+          
+          {isResponsesOpen && (
+            <div className="p-4 space-y-2 max-h-96 overflow-y-auto">
+              {prescreen.modelResponses.map((response: string, index: number) => (
+                <div key={index} className="text-sm bg-background-700 p-2 rounded">
+                  {response}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Collapsible Transcript Section */}
+      <div className="bg-background-700/50 rounded-lg">
+        <button
+          onClick={() => setIsTranscriptOpen(!isTranscriptOpen)}
+          className="w-full p-4 flex items-center justify-between text-lg font-semibold hover:bg-background-700/70 rounded-lg transition-colors"
+        >
+          <span>Transcript</span>
+          {isTranscriptOpen ? (
+            <ChevronUp className="w-5 h-5" />
+          ) : (
+            <ChevronDown className="w-5 h-5" />
+          )}
+        </button>
+        
+        {isTranscriptOpen && (
+          <div className="p-4 space-y-2 max-h-96 overflow-y-auto">
+            {transcriptData.map((segment: ValidatedSegment, index: number) => (
+              <div key={index} className="bg-background-700 p-3 rounded">
+                <p className="text-sm">{segment.text}</p>
+                <p className="text-xs text-gray-500 mt-1">
+                  Time: {segment.start}s - {segment.end}s
+                </p>
+              </div>
+            ))}
           </div>
         )}
       </div>
     </div>
   );
 };
+
 
 const DiagnosisPage = () => {
   const searchParams = useSearchParams();
@@ -120,13 +211,17 @@ const DiagnosisPage = () => {
 
   React.useEffect(() => {
     const fetchPrescreen = async () => {
-      if (!prescreenId) return;
+      if (!prescreenId || !patientId) return;
       
       setIsLoading(true);
       try {
-        const response = await fetch(`/api/prescreens/${prescreenId}/`);
+        const response = await fetch(
+          `/api/diagnosis-pre-report?userId=${patientId}&reportId=${prescreenId}`,
+          { method: 'GET' }
+        );
+    
         if (!response.ok) throw new Error('Failed to fetch prescreen');
-        const data = await response.json();
+        const { data } = await response.json();
         setPrescreen(data);
       } catch (error) {
         console.error('Error fetching prescreen:', error);
@@ -134,9 +229,9 @@ const DiagnosisPage = () => {
         setIsLoading(false);
       }
     };
-
+  
     fetchPrescreen();
-  }, [prescreenId]);
+  }, [prescreenId, patientId]);
 
   if (!patientId) {
     return (
