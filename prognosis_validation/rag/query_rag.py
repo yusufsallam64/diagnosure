@@ -1,10 +1,8 @@
-import asyncio
-import argparse
 import logging
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from openai import AsyncOpenAI
-from build_rag import DocumentStore
+from rag.build_rag import DocumentStore
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -16,7 +14,6 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(),
-        # logging.FileHandler('logs/query.log')
     ]
 )
 logger = logging.getLogger(__name__)
@@ -27,11 +24,18 @@ class RAGQueryEngine:
         self.store_path = store_path
         self.doc_store = None
         self.client = AsyncOpenAI()
+        self.collection_name = "medical_documents"
+        self.embedding_model_name = "BAAI/bge-large-en-v1.5"
 
     async def initialize(self):
         """Initialize the document store connection"""
         try:
-            self.doc_store = DocumentStore(persist_directory=self.store_path)
+            self.doc_store = DocumentStore(
+                collection_name=self.collection_name,
+                embedding_model_name=self.embedding_model_name,
+                persist_directory=self.store_path,
+                max_seq_length=768
+            )
             logger.info("Document store initialized successfully")
         except Exception as e:
             logger.error(f"Failed to initialize document store: {e}")
@@ -40,14 +44,18 @@ class RAGQueryEngine:
     async def search(
         self,
         query: str,
-        top_k: int = 5,
-        min_similarity: float = 0.5,
+        top_k: int = 8,  # Increased from 5 to get more context
+        min_similarity: float = 0.4,  # Slightly lower threshold for medical context
         section_filter: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """Search for similar chunks with optional section filtering"""
         try:
+            # Enhance query with medical context
+            enhanced_query = self._enhance_medical_query(query)
+            
+            # Get similar chunks using ChromaDB
             results = await self.doc_store.get_similar_chunks(
-                query,
+                enhanced_query,
                 top_k=top_k,
                 min_similarity=min_similarity
             )
@@ -59,21 +67,58 @@ class RAGQueryEngine:
                     if r['metadata']['section_type'].lower() == section_filter.lower()
                 ]
             
-            return results
+            # Process and format results
+            processed_results = []
+            for result in results:
+                processed_results.append({
+                    'content': result['content'],
+                    'metadata': result['metadata'],
+                    'similarity': result.get('similarity', 0.0)
+                })
+            
+            return processed_results
             
         except Exception as e:
             logger.error(f"Search failed: {e}")
             raise
 
+    def _enhance_medical_query(self, query: str) -> str:
+        """Enhance query with medical context"""
+        medical_terms = {
+            "symptoms", "diagnosis", "treatment", "medication",
+            "history", "examination", "tests", "results"
+        }
+        
+        # Check if query already contains medical terms
+        if not any(term in query.lower() for term in medical_terms):
+            query = f"medical context: {query} considering symptoms, diagnosis, and treatment"
+        
+        return query
+
     def format_context(self, results: List[Dict[str, Any]]) -> str:
-        """Format search results into context for GPT"""
+        """Format search results into context for GPT with enhanced structure"""
         if not results:
             return "No relevant medical documents found."
         
         context_parts = []
-        for i, result in enumerate(results, 1):
-            context_parts.append(f"Document {i}:\n{result['content']}\n")
-            
+        
+        # Group results by section type
+        sections = {}
+        for result in results:
+            section = result['metadata'].get('section_type', 'general')
+            if section not in sections:
+                sections[section] = []
+            sections[section].append(result)
+        
+        # Format each section with similarity scores
+        for section, items in sections.items():
+            context_parts.append(f"\n=== {section.upper()} ===")
+            for i, item in enumerate(items, 1):
+                similarity = item.get('similarity', 0.0)
+                context_parts.append(
+                    f"\nEntry {i} (Relevance: {similarity:.2%}):\n{item['content']}"
+                )
+                
         return "\n".join(context_parts)
 
     async def get_answer(
@@ -83,32 +128,50 @@ class RAGQueryEngine:
         model: str = "gpt-4",
         temperature: float = 0.7
     ) -> str:
-        """Get answer from GPT using the provided context"""
+        """Get answer from GPT using the provided context with enhanced medical validation"""
         try:
-            system_prompt = """You are a helpful medical document analysis assistant. Your role is to:
-            1. Answer questions based on the provided medical documents
-            2. Only use information present in the provided documents
-            3. Clearly indicate when information is not available in the documents
-            4. Be precise and medical in your language when appropriate
-            5. Format your responses in a clear, organized manner"""
+            system_prompt = """You are an advanced medical diagnosis validation assistant. Your role is to:
+
+1. Analyze the consistency between reported symptoms and proposed diagnoses
+2. Identify potential discrepancies or missing information
+3. Flag any concerning combinations of symptoms and conditions
+4. Suggest additional tests or specialist consultations when appropriate
+5. Consider the patient's medical history and risk factors
+6. Use precise medical terminology while remaining clear and professional
+7. Provide evidence-based reasoning for all suggestions
+8. Maintain a balanced perspective, acknowledging both supporting and contradicting evidence
+
+When analyzing, consider:
+- Symptom patterns and their relationship to proposed diagnoses
+- Temporal relationships between symptoms and conditions
+- Potential drug interactions or contraindications
+- Risk factors and comorbidities
+- Standard diagnostic criteria and guidelines
+- Necessity of additional testing or specialist consultation
+
+Format your response in a clear, structured manner with specific sections for:
+- Primary Analysis
+- Discrepancies/Concerns (if any)
+- Supporting Evidence
+- Recommendations"""
 
             messages = [
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"""Please answer the following question based on the provided medical documents:
+                {"role": "user", "content": f"""Please analyze the following medical case and provide a structured validation:
 
-Query: {query}
+Query/Context: {query}
 
-Relevant Medical Documents:
+Relevant Medical Documentation:
 {context}
 
-Please provide a clear and concise answer based solely on the information in these documents."""}
+Please provide a comprehensive analysis following the structured format."""}
             ]
 
             response = await self.client.chat.completions.create(
                 model=model,
                 messages=messages,
                 temperature=temperature,
-                max_tokens=3000
+                max_tokens=4000
             )
             
             return response.choices[0].message.content
@@ -116,164 +179,3 @@ Please provide a clear and concise answer based solely on the information in the
         except Exception as e:
             logger.error(f"Error getting GPT response: {e}")
             raise
-
-    def display_results(self, query: str, context: str, answer: str, show_context: bool = False):
-        """Display search results and GPT answer in a formatted way"""
-        print("\n" + "="*80)
-        print(f"Query: {query}")
-        print("="*80)
-        
-        if show_context:
-            print("\nContext from Medical Documents:")
-            print("-"*80)
-            print(context)
-            print("-"*80)
-        
-        print("\nAnswer:")
-        print("-"*80)
-        print(answer)
-        print("="*80)
-
-
-async def main():
-    parser = argparse.ArgumentParser(description='RAG Query System for Medical Documents')
-    
-    parser.add_argument(
-        '--query',
-        type=str,
-        help='Query string to search for'
-    )
-    
-    parser.add_argument(
-        '--store-path',
-        type=str,
-        default='./rag/rag_working_dir/chroma_db',
-        help='Path to document store'
-    )
-    parser.add_argument(
-        '--top-k',
-        type=int,
-        default=5,
-        help='Number of documents to retrieve'
-    )
-    parser.add_argument(
-        '--min-similarity',
-        type=float,
-        default=0.5,
-        help='Minimum similarity threshold (0-1)'
-    )
-    parser.add_argument(
-        '--section',
-        type=str,
-        help='Filter by section type'
-    )
-    parser.add_argument(
-        '--show-context',
-        action='store_true',
-        help='Show retrieved documents in output'
-    )
-    parser.add_argument(
-        '--model',
-        type=str,
-        default='gpt-4',
-        help='GPT model to use'
-    )
-    parser.add_argument(
-        '--temperature',
-        type=float,
-        default=0.7,
-        help='Temperature for GPT response'
-    )
-    parser.add_argument(
-        '--run-sample-queries',
-        action='store_true',
-        help='Run a predefined set of sample queries'
-    )
-    args = parser.parse_args()
-
-    try:
-        # Initialize RAG engine
-        engine = RAGQueryEngine(args.store_path)
-        await engine.initialize()
-
-        if args.run_sample_queries:
-            # Define sample queries
-            sample_queries = [
-                "What are the key findings from the imaging studies of the patient's cervical spine and brain?",
-                "Summarize the patient's clinical history and presenting symptoms.",
-                "What were the findings from the cervical spine MRI without contrast?",
-                "Are there any abnormalities in the brain imaging studies?",
-                "Is there any evidence of central canal stenosis or neural foraminal narrowing in the cervical spine?",
-                "What are the patient's primary complaints and symptoms?",
-                "What is the clinical history of the patient regarding left-sided paresthesias and right-sided numbness?",
-                "Has the patient been evaluated for stroke or cervical radiculopathy?",
-                "What is the current diagnosis for the patient's condition?",
-                "What treatment plans have been recommended for the patient?",
-                "Is there any evidence of conversion disorder, and how is it being managed?",
-                "What were the results of the neurological evaluation for the patient?",
-                "Has the patient been assessed for psychiatric conditions such as depression or anxiety?",
-                "What is the psychiatric review of symptoms for the patient?",
-                "What are the key impressions from the imaging and clinical evaluations?",
-                "What are the recommendations for ongoing care and follow-up?",
-                "Are there any specific precautions or assistive measures recommended for the patient?",
-                "What does the imaging section reveal about the patient's cervical spine and brain?",
-                "What information is available in the patient_info section regarding the patient's history and symptoms?",
-                "What treatments have been documented in the treatment section?",
-                "What are the discharge instructions for the patient?",
-                "What follow-up care or outpatient services are recommended?",
-                "Are there any specific medications or therapies prescribed upon discharge?"
-            ]
-
-            # Run each sample query
-            for query in sample_queries:
-                print(f"\nRunning query: {query}")
-                results = await engine.search(
-                    query,
-                    top_k=args.top_k,
-                    min_similarity=args.min_similarity,
-                    section_filter=args.section
-                )
-                context = engine.format_context(results)
-                answer = await engine.get_answer(
-                    query,
-                    context,
-                    model=args.model,
-                    temperature=args.temperature
-                )
-                engine.display_results(
-                    query,
-                    context,
-                    answer,
-                    show_context=args.show_context
-                )
-        else:
-            # Run a single query provided by the user
-            if not args.query:
-                raise ValueError("Please provide a query or use --run-sample-queries to run predefined queries.")
-            
-            results = await engine.search(
-                args.query,
-                top_k=args.top_k,
-                min_similarity=args.min_similarity,
-                section_filter=args.section
-            )
-            context = engine.format_context(results)
-            answer = await engine.get_answer(
-                args.query,
-                context,
-                model=args.model,
-                temperature=args.temperature
-            )
-            engine.display_results(
-                args.query,
-                context,
-                answer,
-                show_context=args.show_context
-            )
-        
-    except Exception as e:
-        logger.error(f"Error during RAG query execution: {e}")
-        raise
-    
-if __name__ == "__main__":
-    asyncio.run(main())
