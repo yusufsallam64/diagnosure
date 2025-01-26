@@ -70,8 +70,7 @@ const PreScreenDisplay = ({
   prescreen?: any;
   isLoading: boolean;
 }) => {
-  const [isTranscriptOpen, setIsTranscriptOpen] = useState(false);
-  const [isResponsesOpen, setIsResponsesOpen] = useState(false);
+  const [isConversationOpen, setIsConversationOpen] = useState(false);
 
   if (isLoading) {
     return (
@@ -94,8 +93,6 @@ const PreScreenDisplay = ({
 
   const transcriptData = prescreen.validatedTranscript || prescreen.originalTranscript || [];
 
-  const [isConversationOpen, setIsConversationOpen] = useState(false);
-
   return (
     <div className="flex-1 p-4 space-y-1 overflow-y-auto">
       {/* Summary Section */}
@@ -114,6 +111,7 @@ const PreScreenDisplay = ({
         )}
       </div>
 
+      {/* Rest of the component remains the same */}
       {/* Medical Entities Section */}
       {prescreen.validationResult?.medicalEntities && (
         <div className="bg-background-700/50 p-4 rounded-lg">
@@ -201,7 +199,7 @@ const DiagnosisPage = () => {
   const searchParams = useSearchParams();
   const patientId = searchParams.get('id');
   const prescreenId = searchParams.get('prescreenId');
-  const [activeTab, setActiveTab] = React.useState(prescreenId ? 'prescreen' : 'records');
+  const [activeTab, setActiveTab] = React.useState('records'); // prescreenId ? 'prescreen' : 
   const [prescreen, setPrescreen] = React.useState<any>(null);
   const [isLoading, setIsLoading] = React.useState(false);
 

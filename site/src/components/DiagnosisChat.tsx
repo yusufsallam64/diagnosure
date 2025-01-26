@@ -13,8 +13,9 @@ interface ValidationResponse {
   confidence_score: number;
 }
 
-const DiagnosisChat = (prescreenId:any) => {
+const DiagnosisChat = (prescreenId: any) => {
   const [diagnosis, setDiagnosis] = useState('');
+  const [previousDiagnosis, setPreviousDiagnosis] = useState('');
   const [validationData, setValidationData] = useState<ValidationResponse | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -32,7 +33,7 @@ const DiagnosisChat = (prescreenId:any) => {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          user_id: 'current-user', // This should be dynamically set based on authenticated user
+          user_id: 'current-user',
           doctor_diagnosis: diagnosis,
           additional_notes: ''
         }),
@@ -52,13 +53,13 @@ const DiagnosisChat = (prescreenId:any) => {
   };
 
   const handleReset = () => {
+    setPreviousDiagnosis(diagnosis); // Save current diagnosis before reset
     setValidationData(null);
-    setDiagnosis('');
+    setDiagnosis(''); // Clear current diagnosis
     setError(null);
   };
 
   const handlePublish = () => {
-    // Handle publishing logic - this could be another API endpoint
     console.log('Publishing diagnosis and validation');
   };
 
@@ -66,9 +67,9 @@ const DiagnosisChat = (prescreenId:any) => {
     if (!validationData) return null;
 
     return (
-      <div className="flex-1">
+      <div className="flex-1 flex flex-col min-h-0">
         <h3 className="text-lg font-semibold text-black mb-2">Validation Analysis</h3>
-        <div className="space-y-4">
+        <div className="space-y-4 overflow-y-auto flex-1 pr-2">
           <div>
             <p className="text-black whitespace-pre-wrap">{validationData.validation_result.analysis}</p>
           </div>
@@ -105,10 +106,16 @@ const DiagnosisChat = (prescreenId:any) => {
 
   return (
     <Card className="h-full">
-      <div className="p-4 h-full">
+      <div className="p-4 h-full flex flex-col"> {/* Added flex-col */}
         {!validationData ? (
           // Input View
           <div className="h-full flex flex-col space-y-4">
+            {previousDiagnosis && (
+              <div className="p-4 rounded-lg bg-gray-50 border border-gray-200">
+                <h4 className="text-sm font-medium text-gray-600 mb-2">Previous Diagnosis</h4>
+                <p className="text-sm text-gray-800">{previousDiagnosis}</p>
+              </div>
+            )}
             <textarea
               value={diagnosis}
               onChange={(e) => setDiagnosis(e.target.value)}
@@ -116,7 +123,7 @@ const DiagnosisChat = (prescreenId:any) => {
               className="flex-1 p-4 rounded-lg bg-background-700 text-black 
                        placeholder-gray-600 border border-background-600 
                        focus:border-primary-500 focus:ring-1 focus:ring-primary-500 
-                       resize-none min-h-[400px]"
+                       resize-none overflow-y-auto"
             />
             {error && (
               <div className="text-red-500 text-sm">{error}</div>
@@ -124,7 +131,7 @@ const DiagnosisChat = (prescreenId:any) => {
             <button
               onClick={handleSubmit}
               disabled={isAnalyzing}
-              className="w-full flex items-center justify-center gap-2 p-4 
+              className="flex items-center justify-center gap-2 p-4 
                        bg-primary-500 hover:bg-primary-600 text-white rounded-lg 
                        transition-colors duration-200 disabled:opacity-50"
             >
@@ -135,7 +142,8 @@ const DiagnosisChat = (prescreenId:any) => {
         ) : (
           // Results View
           <div className="h-full flex flex-col space-y-4">
-            <div className="flex-1 p-6 rounded-lg bg-background-700 border border-background-600 flex flex-col">
+            <div className="flex-1 p-6 rounded-lg bg-background-700 border border-background-600 
+                          flex flex-col min-h-0 max-h-screen">
               <div className="mb-6">
                 <h3 className="text-lg font-semibold text-black mb-2">Diagnosis</h3>
                 <p className="text-black whitespace-pre-wrap">{diagnosis}</p>
@@ -145,7 +153,7 @@ const DiagnosisChat = (prescreenId:any) => {
               
               {renderAnalysis()}
               
-              <div className="pt-4 border-t border-background-600 flex gap-3">
+              <div className="pt-4 mt-auto border-t border-background-600 flex gap-3">
                 <button
                   onClick={handleReset}
                   className="flex items-center gap-2 px-4 py-2 rounded-lg
