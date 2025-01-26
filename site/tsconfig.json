@@ -17,6 +17,6 @@
       "@/*": ["./src/*"]
     }
   },
-  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", "src/pages/api/model/cf.ts", "src/pages/dashboard.jsx"],
+  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", "src/pages/api/model/cf.ts", "src/pages/prescreen.jsx"],
   "exclude": ["node_modules"]
 }

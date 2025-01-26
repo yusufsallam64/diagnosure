@@ -67,18 +67,13 @@ const SignIn = ({
 export async function getServerSideProps(context: GetServerSidePropsContext) {
     const session = await getServerSession(context.req, context.res, authOptions);
 
-    const db = (await client.connect()).db("DB");
     // If the user is already logged in, redirect.
     // Note: Make sure not to redirect to the same page
     // To avoid an infinite loop!
 
-    // if (session) {
-    //     if (await db.collection("Companions").findOne({ userId: session.user?.email })) {
-    //         return { redirect: { destination: "/dashboard" } };
-    //     } else {
-    //         return { redirect: { destination: "/create-companion" } };
-    //     }
-    // }
+    if (session) {
+        return { redirect: { destination: "/dashboard" } };
+    }
 
     const providers = await getProviders();
 

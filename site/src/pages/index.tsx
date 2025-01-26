@@ -1,6 +1,5 @@
 import React from 'react';
 import LandingModel from '@/components/LandingModel';
-import Typewriter from 'typewriter-effect';
 import { useRouter } from 'next/router';
 
 
@@ -33,18 +32,6 @@ export default function LandingPage() {
         <div className="space-y-8">
           <div className="w-full max-w-md mx-auto">
             <LandingModel />
-          </div>
-          <div className="text-3xl text-text text-center font-ReThink font-semibold">
-            <Typewriter
-              options={{
-                strings: ['How are you?', 'Your AI Companion', 'Always Here to Help'],
-                autoStart: true,
-                loop: true,
-                delay: 75,
-                deleteSpeed: 50,
-                cursor: '|'
-              }}
-            />
           </div>
         </div>
       </div>
