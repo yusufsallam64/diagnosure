@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Send, RotateCcw, Share2 } from 'lucide-react';
-import Card from './ui/Card';
+import Card from './ui/card';
 import { useSession } from "next-auth/react";
 import { useRouter } from 'next/router';
 
