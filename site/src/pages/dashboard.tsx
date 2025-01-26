@@ -29,6 +29,7 @@ const PreScreenButton = () => {
 };
 
 const Dashboard = () => {
+    document.title = "Dashboard"
     const { data: session } = useSession();
     
     return (

@@ -16,6 +16,7 @@ const DoctorView = () => {
    const [selectedPatient, setSelectedPatient] = React.useState<Patient | null>(null);
 
    React.useEffect(() => {
+      document.title = "Patients"
       const fetchPatients = async () => {
          try {
             const response = await fetch('/api/patients');

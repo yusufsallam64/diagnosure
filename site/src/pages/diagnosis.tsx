@@ -204,6 +204,7 @@ const DiagnosisPage = () => {
   const [isLoading, setIsLoading] = React.useState(false);
 
   React.useEffect(() => {
+    document.title = "Records"
     const fetchPrescreen = async () => {
       if (!prescreenId || !patientId) return;
 
