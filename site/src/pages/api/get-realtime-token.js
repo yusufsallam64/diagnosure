@@ -19,7 +19,7 @@ export default async function handler(req, res) {
       },
       body: JSON.stringify({
         model: 'gpt-4o-mini-realtime-preview',
-        voice: 'alloy'
+        voice: 'coral'
       }),
     });
 
