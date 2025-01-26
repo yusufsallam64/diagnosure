@@ -29,11 +29,9 @@ const SignIn = ({
                 {/* Logo and title section */}
                 <div className="text-center mb-12 space-y-4">
                     <h1 className="text-6xl font-bold text-text">
-                        <span className="bg-gradient-to-r from-accent via-accent/80 to-secondary bg-clip-text text-transparent">
-                            EMCV
-                        </span>
+                        DiagnoSure
                     </h1>
-                    <p className="text-xl text-text">
+                    <p className="text-xl text-primary-400">
                         Patient Health Reimagined
                     </p>
                 </div>

@@ -45,7 +45,7 @@ export default function LandingPage() {
                 <h1 className="text-6xl font-bold font-heading">
                   <span className="text-text">Welcome to </span>
                   <span className="bg-gradient-to-r from-primary-500 via-secondary-500 to-accent-400 bg-clip-text text-transparent">
-                    EMCV
+                    DiagnoSure
                   </span>
                 </h1>
                 <p className="text-xl text-text/80 font-body max-w-lg">
@@ -127,7 +127,7 @@ export default function LandingPage() {
       </div>
 
       {/* Stats Section */}
-      <div className="border-t border-background-800">
+      {/* <div className="border-t border-background-800">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
             {[
@@ -148,7 +148,7 @@ export default function LandingPage() {
             ))}
           </div>
         </div>
-      </div>
+      </div> */}
     </div>
   );
 }

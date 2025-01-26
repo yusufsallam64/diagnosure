@@ -579,7 +579,7 @@ const Prescreen: React.FC = () => {
       <div className="max-w-6xl mx-auto p-4 md:p-8">
         {conversationTerminated ? (
           <>
-            <div className="flex items-center mb-8">
+          <div className="flex items-center mb-8">
             <button
               onClick={() => window.history.back()}
               aria-label="Return to previous page"
