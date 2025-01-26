@@ -50,6 +50,25 @@ interface PaginationData {
   hasPrevPage: boolean;
 }
 
+// Function to process markdown-like syntax
+const processMarkdown = (text: string): string => {
+  if (!text) return '';
+  
+  // Replace ### headers with styled div
+  text = text.replace(/###\s(.*?)(?=\n|$)/g, '<h3 class="text-lg font-semibold mt-4 mb-2">$1</h3>');
+  
+  // Replace ** bold ** with styled span
+  text = text.replace(/\*\*(.*?)\*\*/g, '<span class="font-bold">$1</span>');
+  
+  // Replace bullet points
+  text = text.replace(/^\s*\-\s/gm, '• ');
+  
+  // Split into paragraphs and wrap each in a div
+  return text.split('\n\n').map((paragraph, index) => 
+    `<div class="mb-3" key="${index}">${paragraph}</div>`
+  ).join('');
+};
+
 const DiagnosisList = () => {
   const [diagnoses, setDiagnoses] = useState<Diagnosis[]>([]);
   const [loading, setLoading] = useState(true);
@@ -69,7 +88,7 @@ const DiagnosisList = () => {
     try {
       const queryParams = new URLSearchParams({
         page: currentPage.toString(),
-        limit: '5',
+        limit: '3',
         sortField: sortField,
         sortOrder: sortOrder,
         ...(startDate && { startDate: startDate.toISOString() }),
@@ -309,9 +328,12 @@ const DiagnosisList = () => {
               <div className="space-y-4">
                 <div>
                   <h4 className="font-medium mb-2">Analysis</h4>
-                  <div className="p-3 bg-background-800 rounded-md">
-                    {selectedDiagnosis.validationData.validation_result.analysis}
-                  </div>
+                  <div 
+                    className="p-4 bg-background-800 rounded-md prose prose-invert max-w-none"
+                    dangerouslySetInnerHTML={{ 
+                      __html: processMarkdown(selectedDiagnosis.validationData.validation_result.analysis)
+                    }}
+                  />
                 </div>
 
                 {selectedDiagnosis.validationData.validation_result.discrepancies.length > 0 && (
