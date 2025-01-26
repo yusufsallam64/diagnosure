@@ -65,7 +65,7 @@ const PastPreScreens = () => {
       // Ensure all parameters are explicitly set
       const queryParams = new URLSearchParams({
         page: currentPage.toString(),
-        limit: '10',
+        limit: '3',
         sortField: sortField,
         sortOrder: sortOrder,
         ...(startDate && { startDate: startDate.toISOString() }),

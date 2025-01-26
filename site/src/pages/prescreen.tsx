@@ -20,7 +20,9 @@ Always maintain professionalism and start conversations in a friendly way. Ask t
 Do not overwhelm the user. You should never be asking more than one follow-up question at a time. Make it a natural conversation that leaves the user comfortable and happy. Keep questions short and do not drag the conversation on. \
 When you have gathered sufficient medical information for a doctor to make a preliminary assessment: \
 ******USE THE conclude_conversation FUNCTION AFTER A POLITE MESSAGE ASKING IF USER WANTS TO GIVE ANY LAST DETAILS \
-****CALL THE conclude_conversation FUNCTION AT THE END WHEN THE CONVERSATION IS OVER****** \
+****CALL THE conclude_conversation FUNCTION AT THE END WHEN THE CONVERSATION IS OVER****** 
+
+Importantly, answer the user in whatever language they are speaking to you in. \
 `;
 
 const TOOLS: Tool[] = [
@@ -392,7 +394,7 @@ const Prescreen: React.FC = () => {
       await peerConnection.setLocalDescription(offer);
 
       const baseUrl = "https://api.openai.com/v1/realtime";
-      const model = "gpt-4o-mini-realtime-preview";
+      const model = "gpt-4o-realtime-preview";
       const sdpResponse = await fetch(`${baseUrl}?model=${model}`, {
         method: "POST",
         body: offer.sdp,
@@ -576,10 +578,22 @@ const Prescreen: React.FC = () => {
     <div className="min-h-screen bg-gradient-to-b from-background-900 to-background-800 text-text">
       <div className="max-w-6xl mx-auto p-4 md:p-8">
         {conversationTerminated ? (
-          <div className="bg-background-800 rounded-xl p-8 text-center">
-            <h2 className="text-3xl font-bold mb-4">Conversation Complete</h2>
-            <p>Thank you for providing your information. Your doctor will review it shortly.</p>
+          <>
+            <div className="flex items-center mb-8">
+            <button
+              onClick={() => window.history.back()}
+              aria-label="Return to previous page"
+              className="flex items-center gap-3 text-lg bg-background-800 hover:bg-primary-600 transition-colors hover:text-primary-950 px-6 py-1 rounded-xl focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-primary"
+            >
+              <ArrowLeft className="w-6 h-6" aria-hidden="true" />
+              <span className="font-medium">Back</span>
+            </button>
           </div>
+            <div className="bg-background-800 rounded-xl p-8 text-center">
+              <h2 className="text-3xl font-bold mb-4">Conversation Complete</h2>
+              <p>Thank you for providing your information. Your doctor will review it shortly.</p>
+            </div>
+          </>
         ) : (
           <>
             <div className="flex items-center mb-8">

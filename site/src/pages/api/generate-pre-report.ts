@@ -4,9 +4,18 @@ import { getServerSession, Session } from 'next-auth';
 import { authOptions } from './auth/[...nextauth]';
 import { MongoClient, Collection } from 'mongodb';
 
-// Initialize MongoDB client
+// Initialize MongoDB client with persistent connection
 const uri = process.env.MONGODB_URI as string;
 const client = new MongoClient(uri);
+
+// Connection state management
+let isConnected = false;
+async function ensureConnected() {
+  if (!isConnected) {
+    await client.connect();
+    isConnected = true;
+  }
+}
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -41,10 +50,11 @@ export function getUserId(session: Session | null): string | null {
 }
 
 async function getPreReportsCollection(): Promise<Collection<ReportData>> {
-  await client.connect();
+  await ensureConnected();
   const db = client.db('reports');
   const collection = db.collection<ReportData>('pre-reports');
   
+  // Create indexes if they don't exist
   await collection.createIndex({ timestamp: 1 });
   await collection.createIndex({ userId: 1 });
   await collection.createIndex({ "timestamp": 1, "userId": 1 });
@@ -66,39 +76,41 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(401).json({ error: 'User session not found' });
   }
 
-  let preReportsCollection: Collection<ReportData> | null = null;
-
   try {
-    preReportsCollection = await getPreReportsCollection();
+    const preReportsCollection = await getPreReportsCollection();
     const { whisperTranscripts, modelResponses } = req.body;
 
-    console.log('Received request:', req.body);
+    console.log('Received request:', JSON.stringify(req.body, null, 2));
 
-    // Validate whisper transcripts structure
-    if (!Array.isArray(whisperTranscripts) || whisperTranscripts.some(t => !t.text || t.start === undefined || t.end === undefined)) {
+    // Validate request structure
+    if (!Array.isArray(whisperTranscripts) || whisperTranscripts.some(t => 
+      !t.text || 
+      !t.timestamp || 
+      isNaN(Date.parse(t.timestamp))
+    )) {
       console.log('Invalid whisper transcripts structure');
       return res.status(400).json({ error: 'Invalid whisper transcripts structure' });
     }
 
-    // Validate model responses
     if (!Array.isArray(modelResponses) || modelResponses.length === 0) {
       console.log('Invalid model responses');
       return res.status(400).json({ error: 'Invalid or missing model responses' });
     }
 
-    // Construct structured validation prompt
-    const validationPrompt = `Analyze and validate these medical conversation segments with timestamps:
+    // Construct validation prompt
+    const validationPrompt = `Analyze, validate, and translate these medical conversation segments with timestamps:
     
     Patient Input Segments: ${JSON.stringify(whisperTranscripts)}
     
     AI Responses: ${JSON.stringify(modelResponses)}
 
-    Perform these tasks:
+    ---TASKS IN ORDER---
     1. Verify coherence between patient input and AI responses
     2. Remove segments with non-medical, irrelevant, or nonsensical content
-    3. Correct transcription errors in remaining segments
+    3. Translate all text to English
+    4. Correct transcription errors in remaining segments
     4. Preserve original timestamps for valid segments
-    5. Detect potential hallucinations or inaccuracies
+    5. Detect potential hallucinations or inaccuracies and flag them
     6. Extract medical entities (symptoms, conditions, etc.)
     
     Return JSON with:
@@ -112,12 +124,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     - Never add new information
     - Only modify text to correct errors
     - Keep original timestamps unchanged
-    - Remove entire segments that are irrelevant
+    - ONLY OUTPUT ENGLISH TEXT
+    - REMOVE CONVERSATION ENTRIES THAT ARE MEDICALLY IRRELEVANT
     - Be strict with medical relevance`;
 
-    // Call GPT for validation
+    // Get validation from OpenAI
     const validationResponse = await openai.chat.completions.create({
-      model: "gpt-4",
+      model: "gpt-4o-mini",
       messages: [
         { 
           role: "system", 
@@ -132,7 +145,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       response_format: { type: "json_object" }
     });
 
-    console.log('Validation response:', validationResponse);
+    console.log('Validation response:', JSON.stringify(validationResponse, null, 2));
 
     const validationResult: ValidationResult = JSON.parse(
       validationResponse.choices[0].message.content || '{}'
@@ -144,7 +157,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       throw new Error('Invalid validation response structure');
     }
 
-    // Create report data with original structure
+    // Create report document
     const reportData: ReportData = {
       userId,
       originalTranscript: whisperTranscripts,
@@ -188,9 +201,5 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       error: error.message || 'Failed to generate report',
       details: error.response?.data || null
     });
-  } finally {
-    if (client) {
-      await client.close();
-    }
   }
 }
