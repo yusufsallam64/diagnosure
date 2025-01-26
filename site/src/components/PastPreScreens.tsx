@@ -127,36 +127,85 @@ const PastPreScreens = () => {
         <h3 className="font-heading text-xl text-text">Past Assessments</h3>
         
         <div className="flex gap-4">
-          <Popover>
-            <PopoverTrigger asChild>
-              <Button variant="outline" className="flex items-center gap-2">
-                <Calendar className="h-4 w-4" />
-                Filter Dates
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent className="w-auto p-0" align="end">
-              <div className="p-4 space-y-4">
-                <div>
-                  <label className="text-sm font-medium">Start Date</label>
-                  <CalendarComponent
-                    mode="single"
-                    selected={startDate}
-                    onSelect={setStartDate}
-                    className="rounded-md border"
-                  />
-                </div>
-                <div>
-                  <label className="text-sm font-medium">End Date</label>
-                  <CalendarComponent
-                    mode="single"
-                    selected={endDate}
-                    onSelect={setEndDate}
-                    className="rounded-md border"
-                  />
-                </div>
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button variant="outline" className="flex items-center gap-2">
+              <Calendar className="h-4 w-4" />
+              Filter Dates
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent 
+            className="w-auto p-2 max-w-[90vw]" 
+            align="end"
+            collisionPadding={16}
+          >
+            <div className="flex flex-col md:flex-row gap-4 p-2">
+              <div className="space-y-3">
+                <label className="text-sm font-medium">Start Date</label>
+                <CalendarComponent
+                  mode="single"
+                  selected={startDate}
+                  onSelect={setStartDate}
+                  className="rounded-md border"
+                  classNames={{
+                    month: "space-y-4",
+                    caption: "flex justify-center pt-2 relative items-center",
+                    cell: "text-center",
+                    head: "text-muted-foreground",
+                  }}
+                />
+                {startDate && (
+                  <div className="flex items-center gap-2 text-sm">
+                    <span>Selected:</span>
+                    <span className="font-medium">
+                      {startDate.toLocaleDateString()}
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setStartDate(null)}
+                      className="h-6 w-6 p-1 text-destructive"
+                    >
+                      <X className="h-3 w-3" />
+                    </Button>
+                  </div>
+                )}
               </div>
-            </PopoverContent>
-          </Popover>
+              
+              <div className="space-y-3">
+                <label className="text-sm font-medium">End Date</label>
+                <CalendarComponent
+                  mode="single"
+                  selected={endDate}
+                  onSelect={setEndDate}
+                  className="rounded-md border"
+                  classNames={{
+                    month: "space-y-4",
+                    caption: "flex justify-center pt-2 relative items-center",
+                    cell: "text-center",
+                    head: "text-muted-foreground",
+                  }}
+                />
+                {endDate && (
+                  <div className="flex items-center gap-2 text-sm">
+                    <span>Selected:</span>
+                    <span className="font-medium">
+                      {endDate.toLocaleDateString()}
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setEndDate(null)}
+                      className="h-6 w-6 p-1 text-destructive"
+                    >
+                      <X className="h-3 w-3" />
+                    </Button>
+                  </div>
+                )}
+              </div>
+            </div>
+          </PopoverContent>
+        </Popover>
 
           <Select value={sortField} onValueChange={handleSortFieldChange}>
             <SelectTrigger className="w-40">
