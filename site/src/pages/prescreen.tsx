@@ -181,7 +181,7 @@ const Prescreen: React.FC = () => {
 
       try {
         const realtimeEvent = JSON.parse(e.data) as RealtimeEvent;
-        console.log('Received event:', realtimeEvent.type);
+        console.log('Received event:', realtimeEvent);
 
         switch (realtimeEvent.type) {
           case 'response.content_part.done':
