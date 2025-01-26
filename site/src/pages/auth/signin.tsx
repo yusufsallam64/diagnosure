@@ -3,7 +3,7 @@ import { getProviders } from "next-auth/react";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "../api/auth/[...nextauth]";
 import AuthProviderBlock from "@/components/auth/AuthProviderBlock";
-import client from '@/lib/db/client';
+import dbClient from '@/lib/db/client';
 import { useEffect, useState } from "react";
 
 const SignIn = ({
@@ -67,20 +67,23 @@ const SignIn = ({
 export async function getServerSideProps(context: GetServerSidePropsContext) {
     const session = await getServerSession(context.req, context.res, authOptions);
 
-    // If the user is already logged in, redirect.
-    // Note: Make sure not to redirect to the same page
-    // To avoid an infinite loop!
-
     if (session) {
-        return { redirect: { destination: "/dashboard" } };
+        const db = dbClient.db();
+        const user = await db.collection('users').findOne({ email: session.user?.email });
+
+        if (user?.role === 'patient') {
+            return { redirect: { destination: '/dashboard', permanent: false } };
+        } else if (user?.role === 'doctor') {
+            return { redirect: { destination: '/doctorView', permanent: false } };
+        }
     }
 
     const providers = await getProviders();
 
-    // TODO --> If no providers, this should error or something
     return {
         props: { providers: providers ?? [] }
     };
 }
+
 
 export default SignIn;

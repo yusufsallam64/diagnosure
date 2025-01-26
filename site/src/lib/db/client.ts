@@ -6,30 +6,38 @@ if (!process.env.MONGODB_URI) {
 
 const uri = process.env.MONGODB_URI;
 
-let client: MongoClient
+console.log("MongoDB URI:", uri); // Log the URI (ensure it doesn't contain sensitive information)
 
 const options = {
     serverApi: {
         version: ServerApiVersion.v1,
         strict: true,
         deprecationErrors: true,
-    }
+    },
+    connectTimeoutMS: 10000,
+    socketTimeoutMS: 45000,
 }
 
+let client: MongoClient;
+
 if (process.env.NODE_ENV === "development") {
-    // In development mode, use a global variable so that the value
-    // is preserved across module reloads caused by HMR (Hot Module Replacement).
     let globalWithMongo = global as typeof globalThis & {
-      _mongoClient?: MongoClient
+        _mongoClient?: MongoClient
     }
-   
+    
     if (!globalWithMongo._mongoClient) {
-      globalWithMongo._mongoClient = new MongoClient(uri, options)
+        try {
+            globalWithMongo._mongoClient = new MongoClient(uri, options);
+            await globalWithMongo._mongoClient.connect();
+            console.log("MongoDB connection test successful");
+        } catch (error) {
+            console.error("MongoDB connection test failed:", error);
+            throw error;
+        }
     }
-    client = globalWithMongo._mongoClient
-  } else {
-    // In production mode, it's best to not use a global variable.
-    client = new MongoClient(uri, options)
-  }
-   
-  export default client
+    client = globalWithMongo._mongoClient;
+} else {
+    client = new MongoClient(uri, options);
+}
+
+export default client;
