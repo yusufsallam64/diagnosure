@@ -1,4 +1,4 @@
-import logging
+from sentence_transformers import SentenceTransformer
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from openai import AsyncOpenAI
@@ -8,66 +8,79 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),
-    ]
-)
-logger = logging.getLogger(__name__)
-
 class RAGQueryEngine:
+    _instance = None
+    _initialized = False
+    
+    def __new__(cls, *args, **kwargs):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
     def __init__(self, store_path: str):
         """Initialize RAG query engine with path to document store"""
-        self.store_path = store_path
-        self.doc_store = None
-        self.client = AsyncOpenAI()
-        self.collection_name = "medical_documents"
-        self.embedding_model_name = "BAAI/bge-large-en-v1.5"
+        if not RAGQueryEngine._initialized:
+            self.store_path = store_path
+            self.doc_store = None
+            self.client = AsyncOpenAI()
+            self.collection_name = "medical_documents"
+            self.embedding_model_name = "BAAI/bge-large-en-v1.5"
+            self.embedding_model = None
+            RAGQueryEngine._initialized = True
 
     async def initialize(self):
-        """Initialize the document store connection"""
+        """Initialize the document store connection and load models"""
         try:
-            self.doc_store = DocumentStore(
-                collection_name=self.collection_name,
-                embedding_model_name=self.embedding_model_name,
-                persist_directory=self.store_path,
-                max_seq_length=768
-            )
-            logger.info("Document store initialized successfully")
+            # Initialize embedding model if not already loaded
+            if self.embedding_model is None:
+                print("Loading embedding model...")
+                self.embedding_model = SentenceTransformer(self.embedding_model_name)
+                self.embedding_model.eval()  # Set to evaluation mode
+                print("Embedding model loaded successfully")
+
+            # Initialize document store if not already initialized
+            if self.doc_store is None:
+                self.doc_store = DocumentStore(
+                    collection_name=self.collection_name,
+                    embedding_model_name=self.embedding_model_name,
+                    persist_directory=self.store_path,
+                    max_seq_length=768,
+                    embedding_model=self.embedding_model  # Pass the loaded model
+                )
+                print("Document store initialized successfully")
+                
         except Exception as e:
-            logger.error(f"Failed to initialize document store: {e}")
+            print(f"Failed to initialize components: {e}")
             raise
 
     async def search(
         self,
         query: str,
-        top_k: int = 8,  # Increased from 5 to get more context
-        min_similarity: float = 0.4,  # Slightly lower threshold for medical context
+        top_k: int = 8,
+        min_similarity: float = 0.4,
         section_filter: Optional[str] = None
     ) -> List[Dict[str, Any]]:
-        """Search for similar chunks with optional section filtering"""
+        """Search for similar chunks with cached embedding model"""
         try:
-            # Enhance query with medical context
             enhanced_query = self._enhance_medical_query(query)
             
-            # Get similar chunks using ChromaDB
+            # Use the cached embedding model for embedding generation
+            query_embedding = self.embedding_model.encode(enhanced_query)
+            
+            # Get similar chunks using ChromaDB with pre-computed embedding
             results = await self.doc_store.get_similar_chunks(
                 enhanced_query,
                 top_k=top_k,
-                min_similarity=min_similarity
+                min_similarity=min_similarity,
+                query_embedding=query_embedding
             )
             
-            # Apply section filter if specified
             if section_filter:
                 results = [
                     r for r in results 
                     if r['metadata']['section_type'].lower() == section_filter.lower()
                 ]
             
-            # Process and format results
             processed_results = []
             for result in results:
                 processed_results.append({
@@ -79,7 +92,7 @@ class RAGQueryEngine:
             return processed_results
             
         except Exception as e:
-            logger.error(f"Search failed: {e}")
+            print(f"Search failed: {e}")  # Replaced logger with print
             raise
 
     def _enhance_medical_query(self, query: str) -> str:
@@ -125,46 +138,46 @@ class RAGQueryEngine:
         self,
         query: str,
         context: str,
-        model: str = "gpt-4",
+        model: str = "gpt-4o-mini",
         temperature: float = 0.7
     ) -> str:
         """Get answer from GPT using the provided context with enhanced medical validation"""
         try:
             system_prompt = """You are an advanced medical diagnosis validation assistant. Your role is to:
 
-1. Analyze the consistency between reported symptoms and proposed diagnoses
-2. Identify potential discrepancies or missing information
-3. Flag any concerning combinations of symptoms and conditions
-4. Suggest additional tests or specialist consultations when appropriate
-5. Consider the patient's medical history and risk factors
-6. Use precise medical terminology while remaining clear and professional
-7. Provide evidence-based reasoning for all suggestions
-8. Maintain a balanced perspective, acknowledging both supporting and contradicting evidence
+                        1. Analyze the consistency between reported symptoms and proposed diagnoses
+                        2. Identify potential discrepancies or missing information
+                        3. Flag any concerning combinations of symptoms and conditions
+                        5. Consider the patient's medical history and risk factors
+                        7. Provide evidence-based reasoning for all suggestions
+                        8. Maintain a balanced perspective, acknowledging both supporting and contradicting evidence
 
-When analyzing, consider:
-- Symptom patterns and their relationship to proposed diagnoses
-- Temporal relationships between symptoms and conditions
-- Potential drug interactions or contraindications
-- Risk factors and comorbidities
-- Standard diagnostic criteria and guidelines
-- Necessity of additional testing or specialist consultation
+                        When analyzing, consider:
+                        - Symptom patterns and their relationship to proposed diagnoses
+                        - Temporal relationships between symptoms and conditions
+                        - Potential drug interactions or contraindications
+                        - Risk factors and comorbidities
+                        - Standard diagnostic criteria and guidelines
+                        - Necessity of additional testing or specialist consultation
 
-Format your response in a clear, structured manner with specific sections for:
-- Primary Analysis
-- Discrepancies/Concerns (if any)
-- Supporting Evidence
-- Recommendations"""
+                        Format your response in a short, but structured manner:
+                        - Primary Analysis
+                        - Discrepancies/Concerns (if any)
+                        - Supporting Evidence
+                        - Recommendations
+                        
+                        *** Present all this in a concise manner so that a doctor can easily read over it ***"""
 
             messages = [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": f"""Please analyze the following medical case and provide a structured validation:
 
-Query/Context: {query}
+                    Query/Context: {query}
 
-Relevant Medical Documentation:
-{context}
+                    Relevant Medical Documentation:
+                    {context}
 
-Please provide a comprehensive analysis following the structured format."""}
+                    Please provide a comprehensive analysis following the structured format."""}
             ]
 
             response = await self.client.chat.completions.create(
@@ -177,5 +190,5 @@ Please provide a comprehensive analysis following the structured format."""}
             return response.choices[0].message.content
             
         except Exception as e:
-            logger.error(f"Error getting GPT response: {e}")
+            print(f"Error getting GPT response: {e}")  # Replaced logger with print
             raise

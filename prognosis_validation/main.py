@@ -1,6 +1,7 @@
 import json
 import logging
 import argparse
+import logging.config
 from pathlib import Path
 from typing import Dict, List
 from datetime import datetime
