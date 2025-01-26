@@ -392,7 +392,7 @@ const Prescreen: React.FC = () => {
       await peerConnection.setLocalDescription(offer);
 
       const baseUrl = "https://api.openai.com/v1/realtime";
-      const model = "gpt-4o-realtime-preview";
+      const model = "gpt-4o-mini-realtime-preview";
       const sdpResponse = await fetch(`${baseUrl}?model=${model}`, {
         method: "POST",
         body: offer.sdp,

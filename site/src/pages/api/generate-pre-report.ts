@@ -2,6 +2,11 @@ import OpenAI from 'openai';
 import { NextApiRequest, NextApiResponse } from 'next';
 import { getServerSession, Session } from 'next-auth';
 import { authOptions } from './auth/[...nextauth]';
+import { MongoClient, Collection } from 'mongodb';
+
+// Initialize MongoDB client
+const uri = process.env.MONGODB_URI as string;
+const client = new MongoClient(uri);
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -29,6 +34,19 @@ export function getUserId(session: Session | null): string | null {
   return session?.user.id as string;
 }
 
+async function getPreReportsCollection(): Promise<Collection<ReportData>> {
+  await client.connect();
+  const db = client.db('reports');
+  const collection = db.collection<ReportData>('pre-reports');
+  
+  // Ensure indexes exist
+  await collection.createIndex({ timestamp: 1 });
+  await collection.createIndex({ userId: 1 });
+  await collection.createIndex({ "timestamp": 1, "userId": 1 });
+  
+  return collection;
+}
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') {
     console.log("Method not allowed")
@@ -45,7 +63,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(401).json({ error: 'User session not found' });
   }
 
+  let preReportsCollection: Collection<ReportData> | null = null;
+
   try {
+    // Get database collection
+    preReportsCollection = await getPreReportsCollection();
+
     const { whisperTranscripts, modelResponses } = req.body;
 
     console.log('Received request:', req.body);
@@ -71,7 +94,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       .map((r: { text: string }) => r.text)
       .filter(Boolean);
 
-    console.log(2)
     // Construct validation prompt
     const validationPrompt = `Analyze and validate the following medical conversation data:
     
@@ -95,7 +117,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     - Never add new information
     - Preserve original meaning
     - Translate any non-English content to English
-    - Remove any hallucinations or mis-transcriptions. 
+    - Remove any hallucinations or mis-transcriptions
     - Be strict with medical relevance`;
 
     // Call GPT for validation
@@ -140,6 +162,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       timestamp: new Date()
     };
 
+    // Insert the report into the database
+    const insertResult = await preReportsCollection.insertOne(reportData);
+    
+    if (!insertResult.acknowledged) {
+      throw new Error('Failed to insert report into database');
+    }
+
     return res.status(200).json({
       success: true,
       report: reportData,
@@ -148,7 +177,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         confidence: reportData.validationResult.confidenceScore,
         issueCount: reportData.validationResult.detectedIssues.length,
         entityCount: reportData.validationResult.medicalEntities.length
-      }
+      },
+      insertedId: insertResult.insertedId
     });
 
   } catch (error: any) {
@@ -157,5 +187,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       error: error.message || 'Failed to generate report',
       details: error.response?.data || null
     });
+  } finally {
+    if (client) {
+      await client.close();
+    }
   }
 }
