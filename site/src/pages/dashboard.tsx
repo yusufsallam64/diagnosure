@@ -7,6 +7,7 @@ import { ArrowRight, User, LogOut } from 'lucide-react';
 import { useRouter } from 'next/router';
 import PastPreScreens from '@/components/PastPreScreens';
 import DiagnosisList from '@/components/DiagnosisList';
+import Head from 'next/head';
 
 const PreScreenButton = () => {
   const router = useRouter();
@@ -29,10 +30,13 @@ const PreScreenButton = () => {
 };
 
 const Dashboard = () => {
-    document.title = "Dashboard"
     const { data: session } = useSession();
     
     return (
+        <>
+        <Head>
+            <title>Dashboard</title>
+        </Head>
         <div className="min-h-screen bg-background-900 text-text p-4 md:p-8">
             <div className="max-w-6xl mx-auto space-y-8">
                 {/* Header */}
@@ -75,6 +79,7 @@ const Dashboard = () => {
                 </div>
             </div>
         </div>
+        </>
     );
 };
 
